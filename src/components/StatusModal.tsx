@@ -1,24 +1,34 @@
-import type { GameMode, RunSnapshot } from '../game/types';
+import type { GameMode, RunSnapshot, TimeOfDay } from '../game/types';
 import { formatRaceTime } from './DrivingHud';
 
 interface PauseModalProps {
   courseName: string;
   mode: GameMode;
+  timeOfDay: TimeOfDay;
   lap: number;
   totalLaps: number;
   elapsedTime: number;
+  onSelectTimeOfDay: (tod: TimeOfDay) => void;
   onResume: () => void;
   onRestart: () => void;
   onOpenGarage: () => void;
   onTitle: () => void;
 }
 
+const TIME_OPTIONS: Array<{ id: TimeOfDay; label: string }> = [
+  { id: 'golden', label: 'Golden' },
+  { id: 'noon', label: 'Noon' },
+  { id: 'twilight', label: 'Twilight' },
+];
+
 export function PauseModal({
   courseName,
   mode,
+  timeOfDay,
   lap,
   totalLaps,
   elapsedTime,
+  onSelectTimeOfDay,
   onResume,
   onRestart,
   onOpenGarage,
@@ -27,12 +37,12 @@ export function PauseModal({
   return (
     <div
       className="fixed inset-0 z-20 flex items-center justify-center p-4"
-      style={{ backgroundColor: 'rgba(10, 13, 18, 0.72)' }}
+      style={{ backgroundColor: 'rgba(9, 12, 18, 0.72)' }}
       role="dialog"
       aria-modal="true"
       aria-label="Game paused"
     >
-      <div className="w-full max-w-md rounded-xl bg-[#141821] border border-white/15 p-6 shadow-2xl flex flex-col gap-5">
+      <div className="w-full max-w-md rounded-xl bg-[#121620] border border-white/15 p-6 shadow-2xl flex flex-col gap-5">
         <div className="flex items-baseline justify-between gap-4 border-b border-white/10 pb-4">
           <div>
             <h2 className="font-display text-2xl font-bold text-[#f7f4ec]">Race Paused</h2>
@@ -43,6 +53,28 @@ export function PauseModal({
               {mode === 'free-roam' ? `Free Roam · Lap ${lap}` : `Lap ${lap} / ${totalLaps}`}
             </div>
             <div className="tabular-mono text-xs text-[#b8c0ce]">{formatRaceTime(elapsedTime)}</div>
+          </div>
+        </div>
+
+        {/* Live mid-race atmosphere lighting switcher */}
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs font-semibold text-[#c4cddc]">Atmosphere</span>
+          <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-[#0a0d14] border border-white/10">
+            {TIME_OPTIONS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => onSelectTimeOfDay(t.id)}
+                aria-pressed={timeOfDay === t.id}
+                className={`px-3 py-1 rounded text-xs font-semibold cursor-pointer transition-colors ${
+                  timeOfDay === t.id
+                    ? 'bg-[#f5f3ee] text-[#11151d]'
+                    : 'text-[#aeb7c6] hover:text-white'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -58,14 +90,14 @@ export function PauseModal({
             <button
               type="button"
               onClick={onRestart}
-              className="py-2.5 px-4 rounded-lg bg-[#1e2432] hover:bg-[#272f40] border border-white/12 text-[#f4f1ea] font-semibold text-sm cursor-pointer transition-colors"
+              className="py-2.5 px-4 rounded-lg bg-[#1c2230] hover:bg-[#252d3f] border border-white/12 text-[#f4f1ea] font-semibold text-sm cursor-pointer transition-colors"
             >
               Restart
             </button>
             <button
               type="button"
               onClick={onOpenGarage}
-              className="py-2.5 px-4 rounded-lg bg-[#1e2432] hover:bg-[#272f40] border border-white/12 text-[#f4f1ea] font-semibold text-sm cursor-pointer transition-colors"
+              className="py-2.5 px-4 rounded-lg bg-[#1c2230] hover:bg-[#252d3f] border border-white/12 text-[#f4f1ea] font-semibold text-sm cursor-pointer transition-colors"
             >
               Garage &amp; Radio
             </button>
@@ -105,47 +137,75 @@ export function FinishModal({
           ? `Podium Finish — #${snapshot.position}`
           : `Finished #${snapshot.position} of ${snapshot.totalRacers}`;
 
+  const tierColor =
+    snapshot.position === 1
+      ? '#fbbf24'
+      : snapshot.position === 2
+        ? '#e2e8f0'
+        : snapshot.position === 3
+          ? '#d97706'
+          : '#94a3b8';
+
+  const tierLabel =
+    snapshot.mode !== 'grand-prix'
+      ? 'Recorded'
+      : snapshot.position === 1
+        ? 'Gold Trophy'
+        : snapshot.position === 2
+          ? 'Silver Trophy'
+          : snapshot.position === 3
+            ? 'Bronze Trophy'
+            : 'Classified';
+
   return (
     <div
       className="fixed inset-0 z-20 flex items-center justify-center p-4"
-      style={{ backgroundColor: 'rgba(10, 13, 18, 0.78)' }}
+      style={{ backgroundColor: 'rgba(9, 12, 18, 0.78)' }}
       role="dialog"
       aria-modal="true"
       aria-label="Race results"
     >
-      <div className="w-full max-w-lg rounded-xl bg-[#141821] border border-white/15 p-6 sm:p-7 shadow-2xl flex flex-col gap-6">
-        <div className="border-b border-white/10 pb-4">
-          <p className="text-xs font-medium text-[#f59e0b] tracking-wide">
-            {snapshot.courseName} ·{' '}
-            {snapshot.mode === 'grand-prix'
-              ? 'Grand Prix'
-              : snapshot.mode === 'free-roam'
-                ? 'Free Roam'
-                : 'Time Trial'}
-          </p>
-          <h2 className="font-display text-3xl font-extrabold text-[#f7f4ec] mt-1">{headline}</h2>
+      <div className="w-full max-w-lg rounded-xl bg-[#121620] border border-white/15 p-6 sm:p-7 shadow-2xl flex flex-col gap-6">
+        <div className="flex items-start justify-between gap-4 border-b border-white/10 pb-4">
+          <div>
+            <p className="text-xs font-medium text-[#f59e0b] tracking-wide">
+              {snapshot.courseName} ·{' '}
+              {snapshot.mode === 'grand-prix'
+                ? 'Grand Prix'
+                : snapshot.mode === 'free-roam'
+                  ? 'Free Roam'
+                  : 'Time Trial'}
+            </p>
+            <h2 className="font-display text-3xl font-extrabold text-[#f7f4ec] mt-1">{headline}</h2>
+          </div>
+          <span
+            className="text-xs font-bold uppercase tracking-wider shrink-0 pt-1"
+            style={{ color: tierColor }}
+          >
+            {tierLabel}
+          </span>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div className="rounded-lg bg-[#1a202c] border border-white/10 p-3.5">
+        <div className="grid grid-cols-2 gap-3.5">
+          <div className="rounded-lg bg-[#181e2a] border border-white/10 p-3.5">
             <div className="text-xs text-[#9da7b8]">Total Time</div>
             <div className="tabular-mono text-xl font-bold text-[#f7f4ec] mt-1">
               {formatRaceTime(snapshot.totalTime)}
             </div>
           </div>
-          <div className="rounded-lg bg-[#1a202c] border border-white/10 p-3.5">
+          <div className="rounded-lg bg-[#181e2a] border border-white/10 p-3.5">
             <div className="text-xs text-[#9da7b8]">Best Lap</div>
             <div className="tabular-mono text-xl font-bold text-[#fbbf24] mt-1">
               {formatRaceTime(snapshot.bestLapTime)}
             </div>
           </div>
-          <div className="rounded-lg bg-[#1a202c] border border-white/10 p-3.5">
+          <div className="rounded-lg bg-[#181e2a] border border-white/10 p-3.5">
             <div className="text-xs text-[#9da7b8]">Style Score</div>
             <div className="tabular-mono text-xl font-bold text-[#34d399] mt-1">
               {snapshot.totalStyleScore.toLocaleString()}
             </div>
           </div>
-          <div className="rounded-lg bg-[#1a202c] border border-white/10 p-3.5">
+          <div className="rounded-lg bg-[#181e2a] border border-white/10 p-3.5">
             <div className="text-xs text-[#9da7b8]">Top Speed</div>
             <div className="tabular-mono text-xl font-bold text-[#f7f4ec] mt-1">
               {snapshot.topSpeedKmh} km/h
@@ -165,7 +225,7 @@ export function FinishModal({
           <button
             type="button"
             onClick={onNextCourse}
-            className="py-3 px-4 rounded-lg bg-[#1e2432] hover:bg-[#272f40] border border-white/12 text-[#f4f1ea] font-semibold text-sm cursor-pointer transition-colors whitespace-nowrap"
+            className="py-3 px-4 rounded-lg bg-[#1c2230] hover:bg-[#252d3f] border border-white/12 text-[#f4f1ea] font-semibold text-sm cursor-pointer transition-colors whitespace-nowrap"
           >
             Next Course
           </button>

@@ -261,6 +261,7 @@ export interface HudTelemetry {
   totalRacers: number;
   lap: number;
   totalLaps: number;
+  lapProgress: number;
   elapsedTime: number;
   currentLapTime: number;
   bestLapTime: number | null;

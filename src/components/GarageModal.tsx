@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { LIVERY_PRESETS, RADIO_STATIONS, TUNING_SPECS } from '../game/courses';
 import type {
   LiveryConfig,
@@ -63,6 +63,21 @@ const RIM_FINISHES: Array<{ id: RimFinish; label: string; dot: string }> = [
 
 const TUNING_ORDER: TuningClass[] = ['balanced', 'drift', 'aero'];
 
+function SpecBar({ label, ratio }: { label: string; ratio: number }) {
+  const clamped = Math.max(0.25, Math.min(1, ratio));
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-[10px] text-[#9aa4b5] w-11 shrink-0">{label}</span>
+      <div className="flex-1 h-1.5 rounded-full bg-white/10 overflow-hidden">
+        <div
+          className="h-full origin-left bg-[#f59e0b]"
+          style={{ transform: `scaleX(${clamped})` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 export function GarageModal({
   config,
   radioStation,
@@ -72,27 +87,41 @@ export function GarageModal({
 }: GarageModalProps) {
   const [tab, setTab] = useState<'workshop' | 'radio'>('workshop');
 
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
   const patch = (partial: Partial<LiveryConfig>) => {
     onChangeConfig({ ...config, ...partial });
   };
 
   return (
     <div
-      className="fixed inset-0 z-30 flex items-center justify-center sm:justify-start p-4 sm:p-8"
-      style={{ backgroundColor: 'rgba(10, 13, 18, 0.56)' }}
+      className="fixed inset-0 z-30 flex items-center justify-center sm:justify-start p-4 sm:p-7"
+      style={{
+        background:
+          'linear-gradient(92deg, rgba(8,11,17,0.82) 0%, rgba(8,11,17,0.45) 45%, rgba(8,11,17,0.06) 100%)',
+      }}
       role="dialog"
       aria-modal="true"
       aria-label="Garage and Radio"
     >
-      <div className="w-full max-w-xl max-h-[90vh] rounded-xl bg-[#121620] border border-white/15 shadow-2xl flex flex-col overflow-hidden">
+      <div className="w-full max-w-[500px] max-h-[90vh] rounded-xl bg-[#111520]/96 border border-white/15 shadow-2xl flex flex-col overflow-hidden">
         {/* Header & Tabs */}
         <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-white/10">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3.5">
             <h2 className="font-display text-lg font-bold text-[#f7f4ec] whitespace-nowrap">
-              Garage &amp; Radio
+              Garage
             </h2>
             <div
-              className="flex items-center gap-1 p-1 rounded-lg bg-[#0b0e15] border border-white/10"
+              className="flex items-center gap-1 p-1 rounded-lg bg-[#0a0d14] border border-white/10"
               role="tablist"
             >
               <button
@@ -156,8 +185,8 @@ export function GarageModal({
                         onClick={() => onChangeConfig({ ...preset })}
                         className={`p-2.5 rounded-lg border text-left transition-colors cursor-pointer ${
                           active
-                            ? 'bg-[#1e2534] border-[#f59e0b]'
-                            : 'bg-[#161b26] border-white/10 hover:border-white/25'
+                            ? 'bg-[#1e2636] border-[#f59e0b]'
+                            : 'bg-[#151a25] border-white/10 hover:border-white/25'
                         }`}
                       >
                         <div className="flex items-center gap-1.5 mb-1.5">
@@ -182,7 +211,7 @@ export function GarageModal({
                 </div>
               </div>
 
-              {/* Paint, Accent & Racing Number */}
+              {/* Paint & Accent Swatches */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-white/10">
                 <div>
                   <span className="block text-xs font-semibold text-[#cbd2de] mb-2">Body Paint</span>
@@ -227,13 +256,13 @@ export function GarageModal({
                 </div>
               </div>
 
-              {/* Finish, Stripe Pattern, Rims & Number */}
+              {/* Finish & Door Number */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <span className="block text-xs font-semibold text-[#cbd2de] mb-1.5">
                     Paint Finish
                   </span>
-                  <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-[#0b0e15] border border-white/10">
+                  <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-[#0a0d14] border border-white/10">
                     {PAINT_FINISHES.map((f) => (
                       <button
                         key={f.id}
@@ -267,7 +296,7 @@ export function GarageModal({
                       const clean = e.target.value.replace(/[^0-9A-Za-z]/g, '').slice(0, 2);
                       patch({ racingNumber: clean || '07' });
                     }}
-                    className="w-full rounded-lg bg-[#0b0e15] border border-white/15 px-3 py-1.5 font-display text-sm font-bold text-[#f7f4ec] tracking-widest focus:outline-none focus:border-[#f59e0b]"
+                    className="w-full rounded-lg bg-[#0a0d14] border border-white/15 px-3 py-1.5 font-display text-sm font-bold text-[#f7f4ec] tracking-widest focus:outline-none focus:border-[#f59e0b]"
                   />
                 </div>
               </div>
@@ -276,7 +305,7 @@ export function GarageModal({
                 <span className="block text-xs font-semibold text-[#cbd2de] mb-1.5">
                   Livery Stripe Pattern
                 </span>
-                <div className="grid grid-cols-5 gap-1 p-1 rounded-lg bg-[#0b0e15] border border-white/10">
+                <div className="grid grid-cols-5 gap-1 p-1 rounded-lg bg-[#0a0d14] border border-white/10">
                   {STRIPE_STYLES.map((s) => (
                     <button
                       key={s.id}
@@ -304,14 +333,14 @@ export function GarageModal({
                       key={r.id}
                       type="button"
                       onClick={() => patch({ rimFinish: r.id })}
-                      className={`flex items-center justify-center gap-2 py-2 px-2.5 rounded-lg border text-xs font-semibold cursor-pointer transition-colors ${
+                      className={`flex items-center justify-center gap-2 py-2 px-2 rounded-lg border text-xs font-semibold cursor-pointer transition-colors ${
                         config.rimFinish === r.id
-                          ? 'bg-[#1e2534] border-[#f59e0b] text-[#f7f4ec]'
-                          : 'bg-[#151a24] border-white/10 text-[#b8c1d0] hover:border-white/25'
+                          ? 'bg-[#1e2636] border-[#f59e0b] text-[#f7f4ec]'
+                          : 'bg-[#151a25] border-white/10 text-[#b8c1d0] hover:border-white/25'
                       }`}
                     >
                       <span
-                        className="w-3 h-3 rounded-full border border-white/30"
+                        className="w-3 h-3 rounded-full border border-white/30 shrink-0"
                         style={{ backgroundColor: r.dot }}
                       />
                       {r.label}
@@ -320,7 +349,7 @@ export function GarageModal({
                 </div>
               </div>
 
-              {/* Performance Tuning Class (Real Physics Impact!) */}
+              {/* Performance Setup with Quantitative Spec Bars */}
               <div className="pt-4 border-t border-white/10">
                 <span className="block text-xs font-semibold text-[#cbd2de] mb-2">
                   Performance Setup
@@ -334,14 +363,18 @@ export function GarageModal({
                         key={tId}
                         type="button"
                         onClick={() => patch({ tuning: tId })}
-                        className={`p-3 rounded-lg border text-left transition-colors cursor-pointer flex flex-col gap-1.5 ${
+                        className={`p-3 rounded-lg border text-left transition-colors cursor-pointer flex flex-col gap-2 ${
                           active
-                            ? 'bg-[#1e2534] border-[#f59e0b]'
-                            : 'bg-[#151a24] border-white/10 hover:border-white/25'
+                            ? 'bg-[#1e2636] border-[#f59e0b]'
+                            : 'bg-[#151a25] border-white/10 hover:border-white/25'
                         }`}
                       >
                         <div className="text-xs font-bold text-[#f7f4ec]">{spec.label}</div>
-                        <p className="text-[11px] text-[#9aa4b5] leading-snug">{spec.summary}</p>
+                        <div className="flex flex-col gap-1">
+                          <SpecBar label="Speed" ratio={(spec.topSpeedMult - 0.85) / 0.25} />
+                          <SpecBar label="Grip" ratio={(spec.driftGripMult - 0.65) / 0.6} />
+                          <SpecBar label="Boost" ratio={(spec.boostChargeMult - 0.7) / 0.7} />
+                        </div>
                       </button>
                     );
                   })}
@@ -364,8 +397,8 @@ export function GarageModal({
                     onClick={() => onSelectRadio(st.id)}
                     className={`flex items-center justify-between gap-4 px-4 py-3.5 rounded-lg border text-left transition-colors cursor-pointer ${
                       active
-                        ? 'bg-[#1f2634] border-[#f59e0b]'
-                        : 'bg-[#161b26] border-white/10 hover:border-white/25'
+                        ? 'bg-[#1e2636] border-[#f59e0b]'
+                        : 'bg-[#151a25] border-white/10 hover:border-white/25'
                     }`}
                   >
                     <div>
@@ -376,7 +409,7 @@ export function GarageModal({
                       className={`text-xs font-bold px-2.5 py-1 rounded ${
                         active
                           ? 'bg-[#f59e0b] text-[#11151d]'
-                          : 'bg-[#0b0e15] text-[#9ea8b8] border border-white/10'
+                          : 'bg-[#0a0d14] text-[#9ea8b8] border border-white/10'
                       }`}
                     >
                       {active ? 'Tuned' : 'Tune'}

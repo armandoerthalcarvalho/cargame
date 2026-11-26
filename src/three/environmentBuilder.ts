@@ -1,7 +1,13 @@
 import * as THREE from 'three';
 import { groundHeightAt, sampleTrackAtDistance } from '../game/track';
 import type { TrackData } from '../game/track';
-import { createRoadTextures, createStartBannerTexture } from './textures';
+import {
+  createChevronSignTexture,
+  createRoadTextures,
+  createStartBannerTexture,
+  createTerrainDetailTextures,
+  createTimingTowerTexture,
+} from './textures';
 
 export interface ParticleSlot {
   active: boolean;
@@ -118,43 +124,60 @@ void main() {
   vec3 dir = normalize(vWorldDir);
   float h = clamp(dir.y, 0.0, 1.0);
 
-  // Smooth 3-stop atmospheric Rayleigh gradient
-  vec3 col = mix(uHorizonColor, uMidColor, smoothstep(0.0, 0.28, h));
-  col = mix(col, uTopColor, smoothstep(0.22, 0.85, h));
+  // Smooth 3-stop atmospheric Rayleigh gradient + warm horizon scattering band
+  vec3 col = mix(uHorizonColor, uMidColor, smoothstep(0.0, 0.26, h));
+  col = mix(col, uTopColor, smoothstep(0.2, 0.84, h));
 
-  // Sun disc + warm Mie atmospheric halo
+  // Sun disc + layered Mie atmospheric halo + subtle horizon crepuscular warmth
   vec3 sDir = normalize(uSunDir);
   float sunDot = max(dot(dir, sDir), 0.0);
-  float sunHalo = pow(sunDot, 10.0) * 0.42 + pow(sunDot, 64.0) * 0.55;
-  float sunDisc = smoothstep(0.9965, 0.9992, sunDot);
-  col += uSunColor * (sunHalo + sunDisc * 1.45);
+  float sunHalo = pow(sunDot, 7.0) * 0.34 + pow(sunDot, 42.0) * 0.52;
+  float sunDisc = smoothstep(0.9968, 0.9993, sunDot);
+  float horizonGlow = exp(-abs(dir.y) * 9.0) * (0.2 + 0.35 * pow(sunDot, 3.0));
+  col += uSunColor * (sunHalo + sunDisc * 1.55 + horizonGlow * 0.32);
 
-  // Drifting volumetric cloud bands
-  if (dir.y > 0.02) {
-    vec2 cloudUV = dir.xz / (dir.y + 0.16) * 0.95 + vec2(uTime * 0.012, uTime * 0.005);
-    float c = fbm(cloudUV);
-    float cloudMask = smoothstep(0.47, 0.78, c) * smoothstep(0.02, 0.22, dir.y) * (1.0 - smoothstep(0.55, 0.95, dir.y));
-    vec3 cloudLit = mix(uHorizonColor * 1.08, uSunColor * 1.12, pow(sunDot, 3.0) * 0.6 + 0.25);
-    col = mix(col, cloudLit, cloudMask * 0.48);
+  // Dual-layer volumetric cumulus + high-altitude wispy cirrus clouds with silver lining
+  if (dir.y > 0.015) {
+    vec2 cloudUV = dir.xz / (dir.y + 0.15) * 0.92 + vec2(uTime * 0.011, uTime * 0.004);
+    float c1 = fbm(cloudUV);
+    float c2 = fbm(cloudUV * 2.35 - vec2(uTime * 0.007, -uTime * 0.005));
+    float density = smoothstep(0.45, 0.78, c1 * 0.72 + c2 * 0.34);
+    float fade = smoothstep(0.015, 0.18, dir.y) * (1.0 - smoothstep(0.58, 0.96, dir.y));
+    float cloudMask = density * fade;
+    // Soft underside shadow + bright sunlit silver-lining edge
+    vec3 cloudShadow = mix(uMidColor * 0.85, uHorizonColor * 0.96, 0.45);
+    vec3 cloudBright = mix(uHorizonColor * 1.12, uSunColor * 1.24, pow(sunDot, 3.0) * 0.72 + 0.25);
+    float silverLining = smoothstep(0.42, 0.66, c1) * (1.0 - smoothstep(0.66, 0.88, c1)) * pow(sunDot, 4.0);
+    vec3 cloudCol = mix(cloudShadow, cloudBright, clamp(c2 * 0.85 + pow(sunDot, 2.0) * 0.45, 0.0, 1.0)) + uSunColor * silverLining * 0.7;
+    col = mix(col, cloudCol, cloudMask * 0.56);
+
+    // Subtle high-altitude wispy cirrus streaks
+    vec2 cirrusUV = dir.xz / (dir.y + 0.32) * vec2(1.8, 0.65) + vec2(uTime * 0.006, 0.0);
+    float cirrus = smoothstep(0.58, 0.84, fbm(cirrusUV)) * smoothstep(0.15, 0.42, dir.y) * 0.22;
+    col = mix(col, mix(uHorizonColor, uSunColor, 0.5) * 1.1, cirrus);
   }
 
-  // Flowing Aurora Borealis ribbons (Glacier Observatory & Twilight)
+  // Flowing Aurora Borealis curtains (Glacier Observatory & Twilight)
   if (uAuroraStrength > 0.01 && dir.y > 0.08) {
-    vec2 aUV = dir.xz / (dir.y + 0.25);
-    float wave = sin(aUV.x * 2.4 + uTime * 0.35 + sin(aUV.y * 1.8 - uTime * 0.25));
-    float curtain = smoothstep(0.35, 0.95, wave * 0.5 + 0.5) * smoothstep(0.1, 0.42, dir.y) * (1.0 - smoothstep(0.5, 0.92, dir.y));
-    float shimmer = fbm(aUV * 3.0 + vec2(uTime * 0.08, -uTime * 0.05));
-    vec3 auroraCol = mix(vec3(0.08, 0.92, 0.64), vec3(0.24, 0.65, 1.0), shimmer);
-    col += auroraCol * curtain * shimmer * 0.72 * uAuroraStrength;
+    vec2 aUV = dir.xz / (dir.y + 0.24);
+    float wave = sin(aUV.x * 2.5 + uTime * 0.35 + sin(aUV.y * 1.9 - uTime * 0.24));
+    float wave2 = cos(aUV.x * 1.6 - uTime * 0.22 + sin(aUV.y * 2.2 + uTime * 0.18));
+    float curtain = smoothstep(0.32, 0.95, (wave * 0.65 + wave2 * 0.35) * 0.5 + 0.5)
+      * smoothstep(0.09, 0.4, dir.y)
+      * (1.0 - smoothstep(0.52, 0.92, dir.y));
+    float shimmer = fbm(aUV * 3.1 + vec2(uTime * 0.08, -uTime * 0.05));
+    vec3 auroraCol = mix(vec3(0.08, 0.94, 0.66), vec3(0.28, 0.62, 1.0), shimmer);
+    col += auroraCol * curtain * shimmer * 0.78 * uAuroraStrength;
   }
 
-  // Subtle high-altitude twilight stars
-  if (uStarStrength > 0.01 && dir.y > 0.18) {
-    vec2 starGrid = floor(dir.xz / (dir.y + 0.1) * 140.0);
+  // Multi-temperature twilight starfield
+  if (uStarStrength > 0.01 && dir.y > 0.15) {
+    vec2 starGrid = floor(dir.xz / (dir.y + 0.1) * 155.0);
     float s = hash21(starGrid);
-    if (s > 0.994) {
-      float tw = 0.6 + 0.4 * sin(uTime * 2.5 + s * 80.0);
-      col += vec3(0.92, 0.96, 1.0) * tw * uStarStrength * smoothstep(0.18, 0.5, dir.y);
+    if (s > 0.9935) {
+      float tw = 0.6 + 0.4 * sin(uTime * 2.6 + s * 90.0);
+      vec3 starTint = mix(vec3(0.84, 0.92, 1.0), vec3(1.0, 0.93, 0.8), fract(s * 31.7));
+      col += starTint * tw * uStarStrength * smoothstep(0.15, 0.48, dir.y);
     }
   }
 
@@ -169,7 +192,9 @@ varying vec2 vUv;
 void main() {
   vUv = uv;
   vec3 pos = position;
-  float wave = sin(pos.x * 0.06 + uTime * 1.4) * 0.22 + cos(pos.z * 0.055 - uTime * 1.1) * 0.22;
+  float wave = sin(pos.x * 0.058 + uTime * 1.35) * 0.22
+    + cos(pos.z * 0.052 - uTime * 1.05) * 0.22
+    + sin((pos.x + pos.z) * 0.032 + uTime * 0.85) * 0.12;
   pos.y += wave;
   vec4 wp = modelMatrix * vec4(pos, 1.0);
   vWorldPos = wp.xyz;
@@ -187,23 +212,25 @@ varying vec3 vWorldPos;
 varying vec2 vUv;
 
 void main() {
-  vec2 p = vWorldPos.xz * 0.075;
-  float r1 = sin(p.x * 2.1 + uTime * 1.6 + cos(p.y * 1.8 - uTime * 1.1));
-  float r2 = cos(p.y * 2.6 - uTime * 1.3 + sin(p.x * 1.7 + uTime * 0.9));
-  vec3 n = normalize(vec3((r1 + r2) * 0.08, 1.0, (r2 - r1) * 0.08));
+  vec2 p = vWorldPos.xz * 0.072;
+  float r1 = sin(p.x * 2.1 + uTime * 1.55 + cos(p.y * 1.85 - uTime * 1.1));
+  float r2 = cos(p.y * 2.65 - uTime * 1.25 + sin(p.x * 1.75 + uTime * 0.95));
+  float r3 = sin((p.x - p.y) * 4.2 + uTime * 2.2) * 0.45;
+  vec3 n = normalize(vec3((r1 + r2 + r3) * 0.075, 1.0, (r2 - r1 + r3) * 0.075));
 
   vec3 viewDir = normalize(cameraPosition - vWorldPos);
-  float fresnel = pow(1.0 - max(dot(viewDir, n), 0.0), 3.0);
+  float fresnel = pow(1.0 - max(dot(viewDir, n), 0.0), 3.2);
 
-  vec3 base = mix(uDeepColor, uShallowColor, 0.45 + 0.35 * fresnel + 0.1 * r1);
+  vec3 base = mix(uDeepColor, uShallowColor, clamp(0.42 + 0.42 * fresnel + 0.12 * r1, 0.0, 1.0));
 
   vec3 halfVec = normalize(normalize(uSunDir) + viewDir);
-  float spec = pow(max(dot(n, halfVec), 0.0), 96.0);
-  vec3 col = base + uSunColor * spec * 1.25;
+  float specBroad = pow(max(dot(n, halfVec), 0.0), 36.0) * 0.35;
+  float specSharp = pow(max(dot(n, halfVec), 0.0), 140.0) * 1.5;
+  vec3 col = base + uSunColor * (specBroad + specSharp);
 
-  // Subtle sunlit sea-foam shimmer crests
-  float foam = smoothstep(1.35, 1.85, r1 + r2);
-  col = mix(col, vec3(0.92, 0.98, 1.0), foam * 0.14);
+  // Sunlit turquoise wave crests & sea-foam shimmer
+  float foam = smoothstep(1.38, 1.95, r1 + r2 + r3 * 0.5);
+  col = mix(col, vec3(0.94, 0.99, 1.0), foam * 0.22);
 
   gl_FragColor = vec4(col, 0.96);
 }
@@ -332,7 +359,11 @@ function createGuardrailGeometry(track: TrackData, lateral: number, height: numb
   return geo;
 }
 
-function createTerrainMesh(track: TrackData): THREE.Mesh {
+function createTerrainMesh(
+  track: TrackData,
+  detailAlbedo: THREE.CanvasTexture,
+  detailBump: THREE.CanvasTexture,
+): THREE.Mesh {
   // Massive 1500m x 1500m sculpted landscape enclosing the full 2.2km+ circuits
   const size = 1500;
   const segs = 136;
@@ -371,8 +402,12 @@ function createTerrainMesh(track: TrackData): THREE.Mesh {
   geo.computeVertexNormals();
 
   const mat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
     vertexColors: true,
-    roughness: 0.92,
+    map: detailAlbedo,
+    bumpMap: detailBump,
+    bumpScale: 0.35,
+    roughness: 0.9,
     metalness: 0.04,
   });
 
@@ -504,6 +539,166 @@ function buildCheckpointArch(track: TrackData, sPos: number, accentHex: string):
   arch.add(glowStrip);
 
   return arch;
+}
+
+function buildTimingPavilion(
+  track: TrackData,
+  sPos: number,
+  timingTex: THREE.CanvasTexture,
+  accentHex: string,
+): THREE.Group {
+  // Architectural motorsport Race Control & Timing Pavilion framing the Start/Finish straight
+  const sample = sampleTrackAtDistance(track, sPos);
+  const halfRoad = track.course.roadWidth * 0.5 + track.course.shoulderWidth;
+  const latOffset = halfRoad + 8.5;
+
+  const px = sample.pos.x + sample.right.x * latOffset;
+  const pz = sample.pos.z + sample.right.z * latOffset;
+  const gy = Math.min(sample.pos.y, groundHeightAt(track, px, pz));
+
+  const pavilion = new THREE.Group();
+  pavilion.position.set(px, gy, pz);
+  pavilion.rotation.y = Math.atan2(sample.tangent.x, sample.tangent.z);
+
+  const concreteMat = new THREE.MeshStandardMaterial({ color: 0xd5d0c6, roughness: 0.82, metalness: 0.06 });
+  const darkSteelMat = new THREE.MeshStandardMaterial({ color: 0x1b222e, roughness: 0.36, metalness: 0.78 });
+  const timberMat = new THREE.MeshStandardMaterial({ color: 0x7c5032, roughness: 0.72, metalness: 0.08 });
+  const glassMat = new THREE.MeshPhysicalMaterial({
+    color: 0x1a2c44,
+    emissive: new THREE.Color(0xffcf88),
+    emissiveIntensity: 0.34,
+    roughness: 0.14,
+    metalness: 0.22,
+    clearcoat: 0.9,
+    envMapIntensity: 0.95,
+  });
+  const accentMat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(accentHex),
+    emissive: new THREE.Color(accentHex),
+    emissiveIntensity: 1.25,
+    roughness: 0.22,
+  });
+  const screenMat = new THREE.MeshStandardMaterial({
+    map: timingTex,
+    emissiveMap: timingTex,
+    emissive: new THREE.Color(0xffffff),
+    emissiveIntensity: 0.95,
+    roughness: 0.2,
+  });
+
+  // Grounded deep foundation plinth (reaches well below sloped edges)
+  const plinth = new THREE.Mesh(new THREE.BoxGeometry(10.5, 6.0, 26), concreteMat);
+  plinth.position.set(0, -1.6, 0);
+  plinth.receiveShadow = true;
+  pavilion.add(plinth);
+
+  // Elevated terraced race-control box with warm-lit panoramic glazing
+  const booth = new THREE.Mesh(new THREE.BoxGeometry(7.0, 4.4, 18.5), glassMat);
+  booth.position.set(-0.6, 3.6, 0);
+  booth.castShadow = true;
+  pavilion.add(booth);
+
+  // Architectural steel structural columns
+  const colGeo = new THREE.BoxGeometry(0.45, 7.6, 0.45);
+  for (const cz of [-10.5, -3.5, 3.5, 10.5]) {
+    const colRoad = new THREE.Mesh(colGeo, darkSteelMat);
+    colRoad.position.set(4.2, 5.1, cz);
+    pavilion.add(colRoad);
+    const colBack = new THREE.Mesh(colGeo, darkSteelMat);
+    colBack.position.set(-4.2, 5.1, cz);
+    pavilion.add(colBack);
+  }
+
+  // Cantilevered motorsport shade canopy angled toward the circuit (+X faces the track)
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(12.2, 0.65, 27.5), darkSteelMat);
+  roof.position.set(0.8, 9.0, 0);
+  roof.rotation.z = 0.055;
+  roof.castShadow = true;
+  pavilion.add(roof);
+
+  const soffit = new THREE.Mesh(new THREE.BoxGeometry(11.4, 0.22, 26.8), timberMat);
+  soffit.position.set(0.8, 8.62, 0);
+  soffit.rotation.z = 0.055;
+  pavilion.add(soffit);
+
+  const fasciaGlow = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.22, 27.2), accentMat);
+  fasciaGlow.position.set(6.85, 9.3, 0);
+  pavilion.add(fasciaGlow);
+
+  // Glowing LED Race Timing Tower angled cleanly toward the start grid & oncoming drivers
+  const timingHolder = new THREE.Group();
+  timingHolder.position.set(4.45, 4.9, 3.8);
+  timingHolder.rotation.y = Math.PI * 0.74;
+
+  const screenFrame = new THREE.Mesh(new THREE.BoxGeometry(8.4, 4.1, 0.4), darkSteelMat);
+  timingHolder.add(screenFrame);
+
+  const screenFace = new THREE.Mesh(new THREE.PlaneGeometry(7.9, 3.7), screenMat);
+  screenFace.position.z = 0.22;
+  timingHolder.add(screenFace);
+
+  pavilion.add(timingHolder);
+
+  return pavilion;
+}
+
+function buildCornerChevrons(
+  track: TrackData,
+  chevronTex: THREE.CanvasTexture,
+): THREE.Group {
+  const group = new THREE.Group();
+  const outerOffset = track.course.roadWidth * 0.5 + track.course.shoulderWidth + 1.15;
+
+  const boardGeo = new THREE.BoxGeometry(2.6, 1.25, 0.16);
+  const postGeo = new THREE.BoxGeometry(0.14, 1.5, 0.14);
+  const backMat = new THREE.MeshStandardMaterial({ color: 0x1e2430, roughness: 0.6, metalness: 0.5 });
+  const faceMat = new THREE.MeshStandardMaterial({
+    map: chevronTex,
+    emissiveMap: chevronTex,
+    emissive: new THREE.Color(0xffffff),
+    emissiveIntensity: 0.45,
+    roughness: 0.35,
+  });
+  const boardMats = [backMat, backMat, backMat, backMat, faceMat, faceMat];
+
+  // Place reflective motorsport chevron turn markers on the outside of sharp bends
+  let cooldown = 0;
+  for (let i = 0; i < track.samples.length; i += 2) {
+    if (cooldown > 0) {
+      cooldown--;
+      continue;
+    }
+    const s = track.samples[i];
+    if (Math.abs(s.curvature) < 0.0085) continue;
+
+    // Outside of curve: positive curvature bends toward +right, so outside is -right (and vice versa)
+    const outsideSign = s.curvature > 0 ? -1 : 1;
+    const x = s.pos.x + s.right.x * outsideSign * outerOffset;
+    const z = s.pos.z + s.right.z * outsideSign * outerOffset;
+    const y = s.pos.y + Math.sin(s.bankAngle) * outsideSign * outerOffset;
+
+    const sign = new THREE.Group();
+    sign.position.set(x, y, z);
+    const heading = Math.atan2(s.tangent.x, s.tangent.z);
+    // Angle board slightly inward toward oncoming drivers
+    sign.rotation.y = heading + (outsideSign > 0 ? -0.35 : 0.35);
+
+    const postL = new THREE.Mesh(postGeo, backMat);
+    postL.position.set(-0.9, 0.75, 0);
+    sign.add(postL);
+    const postR = new THREE.Mesh(postGeo, backMat);
+    postR.position.set(0.9, 0.75, 0);
+    sign.add(postR);
+
+    const board = new THREE.Mesh(boardGeo, boardMats);
+    board.position.set(0, 1.65, 0);
+    sign.add(board);
+
+    group.add(sign);
+    cooldown = 5;
+  }
+
+  return group;
 }
 
 function buildInteractiveFeatures(
@@ -672,22 +867,33 @@ function buildWorldLandmarks(track: TrackData): THREE.Group {
       [185, -360, 36, 54],
       [-105, -165, 28, 42],
     ];
+    const strataMat = new THREE.MeshStandardMaterial({ color: 0xe3a86b, roughness: 0.86, metalness: 0.03 });
     for (const [mx, mz, rad, h] of mesaCoords) {
       const gy = groundHeightAt(track, mx, mz);
       const mesa = new THREE.Group();
       mesa.position.set(mx, gy - 2, mz);
       // Extend base skirt 18m deep so cylindrical mesas never expose a floating edge on sloped hills
-      const base = new THREE.Mesh(new THREE.CylinderGeometry(rad * 0.72, rad * 1.08, h * 0.65 + 18, 7), rockMat);
-      base.position.y = h * 0.32 - 9;
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(rad * 0.74, rad * 1.1, h * 0.56 + 18, 8), rockMat);
+      base.position.y = h * 0.28 - 9;
       mesa.add(base);
-      const top = new THREE.Mesh(new THREE.CylinderGeometry(rad * 0.52, rad * 0.68, h * 0.42, 7), capMat);
-      top.position.y = h * 0.78;
+      // Contrasting sedimentary sandstone strata band
+      const band = new THREE.Mesh(new THREE.CylinderGeometry(rad * 0.64, rad * 0.73, h * 0.16, 8), strataMat);
+      band.position.y = h * 0.62;
+      mesa.add(band);
+      const top = new THREE.Mesh(new THREE.CylinderGeometry(rad * 0.48, rad * 0.62, h * 0.34, 8), capMat);
+      top.position.y = h * 0.84;
       mesa.add(top);
       group.add(mesa);
     }
   } else if (style === 'limestone-viaduct') {
     const limeMat = new THREE.MeshStandardMaterial({ color: 0xeae3d2, roughness: 0.78, metalness: 0.05 });
     const terraMat = new THREE.MeshStandardMaterial({ color: 0xc26546, roughness: 0.75, metalness: 0.06 });
+    const windowMat = new THREE.MeshStandardMaterial({
+      color: 0x264461,
+      emissive: 0xffd580,
+      emissiveIntensity: 0.28,
+      roughness: 0.3,
+    });
     const lanternMat = new THREE.MeshStandardMaterial({
       color: 0xfff3c4,
       emissive: 0xffd275,
@@ -699,20 +905,82 @@ function buildWorldLandmarks(track: TrackData): THREE.Group {
     const lhZ = 210;
     const lhY = Math.max(-2, groundHeightAt(track, lhX, lhZ));
     const lighthouse = new THREE.Group();
-    lighthouse.position.set(lhX, lhY - 1, lhZ);
-    const tower = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 4.6, 38, 12), limeMat);
-    tower.position.y = 19;
+    lighthouse.position.set(lhX, lhY - 4, lhZ);
+    const tower = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 4.9, 44, 12), limeMat);
+    tower.position.y = 20;
     lighthouse.add(tower);
     const gallery = new THREE.Mesh(new THREE.CylinderGeometry(3.8, 3.4, 1.6, 12), terraMat);
-    gallery.position.y = 38;
+    gallery.position.y = 42;
     lighthouse.add(gallery);
     const lantern = new THREE.Mesh(new THREE.CylinderGeometry(2.3, 2.3, 4.6, 12), lanternMat);
-    lantern.position.y = 41;
+    lantern.position.y = 45;
     lighthouse.add(lantern);
     const roof = new THREE.Mesh(new THREE.ConeGeometry(3.1, 4.2, 12), terraMat);
-    roof.position.y = 45.2;
+    roof.position.y = 49.2;
     lighthouse.add(roof);
     group.add(lighthouse);
+
+    // Scenic whitewashed Mediterranean hillside villas with terracotta roofs
+    const villaSpots: Array<[number, number, number]> = [
+      [56, -120, 0.2],
+      [68, 35, -0.4],
+      [78, 170, 0.5],
+      [-55, -245, 1.1],
+      [-210, -280, -0.6],
+      [-235, 225, 0.9],
+    ];
+    for (const [vx, vz, rotY] of villaSpots) {
+      const vy = groundHeightAt(track, vx, vz);
+      if (track.course.waterLevel !== null && vy < track.course.waterLevel + 3) continue;
+      const villa = new THREE.Group();
+      villa.position.set(vx, vy - 2.5, vz);
+      villa.rotation.y = rotY;
+      const walls = new THREE.Mesh(new THREE.BoxGeometry(11, 9, 8.5), limeMat);
+      walls.position.y = 4.5;
+      villa.add(walls);
+      const pitchedRoof = new THREE.Mesh(new THREE.ConeGeometry(7.8, 3.6, 4), terraMat);
+      pitchedRoof.position.y = 10.6;
+      pitchedRoof.rotation.y = Math.PI / 4;
+      villa.add(pitchedRoof);
+      const win = new THREE.Mesh(new THREE.BoxGeometry(6.8, 2.2, 8.7), windowMat);
+      win.position.y = 5.6;
+      villa.add(win);
+      group.add(villa);
+    }
+
+    // Crisp Mediterranean sailboats gliding on the turquoise lagoon
+    const hullMat = new THREE.MeshStandardMaterial({ color: 0xf4f0e8, roughness: 0.45, metalness: 0.1 });
+    const sailMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 0.65,
+      side: THREE.DoubleSide,
+    });
+    const mastMat = new THREE.MeshStandardMaterial({ color: 0x3b4250, roughness: 0.5, metalness: 0.6 });
+    const boatRand = seededRand(6183);
+    if (track.course.waterLevel !== null) {
+      const wY = track.course.waterLevel + 0.15;
+      for (let b = 0; b < 14; b++) {
+        const bx = -140 - boatRand() * 340;
+        const bz = -360 + boatRand() * 720;
+        const gy = groundHeightAt(track, bx, bz);
+        if (gy > wY - 1.2) continue; // keep strictly on open water
+        const boat = new THREE.Group();
+        boat.position.set(bx, wY, bz);
+        boat.rotation.y = boatRand() * Math.PI * 2;
+        const hull = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.9, 6.8), hullMat);
+        hull.position.y = 0.35;
+        boat.add(hull);
+        const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.11, 8.2, 6), mastMat);
+        mast.position.set(0, 4.4, 0.3);
+        boat.add(mast);
+        const sailGeo = new THREE.ConeGeometry(2.6, 7.2, 3);
+        sailGeo.scale(0.15, 1, 1);
+        const sail = new THREE.Mesh(sailGeo, sailMat);
+        sail.position.set(0, 4.5, -0.7);
+        boat.add(sail);
+        group.add(boat);
+      }
+    }
 
     // Scenic whitewashed viaduct colonnade along the opening coastal stretch
     for (let i = 0; i < 10; i++) {
@@ -721,12 +989,12 @@ function buildWorldLandmarks(track: TrackData): THREE.Group {
       const px = sample.pos.x - sample.right.x * 24;
       const pz = sample.pos.z - sample.right.z * 24;
       const py = groundHeightAt(track, px, pz);
-      const col = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.85, 18, 8), limeMat);
-      col.position.set(px, py + 8, pz);
+      const col = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.85, 22, 8), limeMat);
+      col.position.set(px, py + 7, pz);
       group.add(col);
     }
   } else if (style === 'sakura-torii') {
-    // Iconic vermilion Torii grand portals spanning the mountain skyway + Mount Solstice peak!
+    // Iconic vermilion Torii grand portals + 3-tier hillside Japanese Pagoda + Mount Solstice peak
     const vermilionMat = new THREE.MeshStandardMaterial({
       color: 0xcf2626,
       roughness: 0.42,
@@ -743,6 +1011,7 @@ function buildWorldLandmarks(track: TrackData): THREE.Group {
       emissiveIntensity: 1.5,
     });
     const stoneMat = new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 0.88 });
+    const plasterMat = new THREE.MeshStandardMaterial({ color: 0xf4efe6, roughness: 0.82 });
 
     const toriiFractions = [0.09, 0.34, 0.63, 0.88];
     const halfSpan = track.course.roadWidth * 0.5 + 3.4;
@@ -761,12 +1030,10 @@ function buildWorldLandmarks(track: TrackData): THREE.Group {
       pR.position.set(halfSpan, 6.5, 0);
       torii.add(pR);
 
-      // Lower nuki crossbeam
       const nuki = new THREE.Mesh(new THREE.BoxGeometry(halfSpan * 2 + 4.4, 0.9, 0.85), vermilionMat);
       nuki.position.set(0, 10.6, 0);
       torii.add(nuki);
 
-      // Upper kasagi lintel + dark slate roof cap
       const kasagi = new THREE.Mesh(new THREE.BoxGeometry(halfSpan * 2 + 7.2, 1.25, 1.3), vermilionMat);
       kasagi.position.set(0, 13.0, 0);
       torii.add(kasagi);
@@ -775,7 +1042,6 @@ function buildWorldLandmarks(track: TrackData): THREE.Group {
       cap.position.set(0, 13.85, 0);
       torii.add(cap);
 
-      // Flanking glowing stone lanterns at gate feet
       for (const side of [-1, 1]) {
         const lx = side * (halfSpan + 2.2);
         const base = new THREE.Mesh(new THREE.BoxGeometry(1.1, 2.2, 1.1), stoneMat);
@@ -793,6 +1059,34 @@ function buildWorldLandmarks(track: TrackData): THREE.Group {
       group.add(torii);
     }
 
+    // Traditional 3-Tier Vermilion Pagoda overlooking the mountain pass
+    const pagX = 68;
+    const pagZ = 148;
+    const pagY = groundHeightAt(track, pagX, pagZ);
+    const pagoda = new THREE.Group();
+    pagoda.position.set(pagX, pagY - 3, pagZ);
+    const pBase = new THREE.Mesh(new THREE.BoxGeometry(13, 8, 13), stoneMat);
+    pBase.position.y = 1;
+    pagoda.add(pBase);
+    for (let tier = 0; tier < 3; tier++) {
+      const scale = 1 - tier * 0.2;
+      const ty = 7.2 + tier * 6.0;
+      const story = new THREE.Mesh(
+        new THREE.BoxGeometry(9.2 * scale, 4.4, 9.2 * scale),
+        tier % 2 === 0 ? vermilionMat : plasterMat,
+      );
+      story.position.y = ty;
+      pagoda.add(story);
+      const eave = new THREE.Mesh(new THREE.ConeGeometry(9.4 * scale, 2.6, 4), darkCapMat);
+      eave.position.y = ty + 3.1;
+      eave.rotation.y = Math.PI / 4;
+      pagoda.add(eave);
+    }
+    const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.38, 6.2, 8), vermilionMat);
+    spire.position.y = 26.2;
+    pagoda.add(spire);
+    group.add(pagoda);
+
     // Distant iconic snow-capped volcanic mountain ("Mount Solstice") dominating the horizon
     const mountain = new THREE.Group();
     mountain.position.set(175, -10, 460);
@@ -806,13 +1100,22 @@ function buildWorldLandmarks(track: TrackData): THREE.Group {
     mountain.add(mSnow);
     group.add(mountain);
   } else {
-    // Glacier Observatory: illuminated brass-and-glass astronomical domes
+    // Glacier Observatory: illuminated brass-and-glass astronomical domes + faceted glacial ice spires
     const domeWhite = new THREE.MeshStandardMaterial({ color: 0xd8e2ec, roughness: 0.35, metalness: 0.45 });
     const brassMat = new THREE.MeshStandardMaterial({ color: 0xd4a44a, roughness: 0.24, metalness: 0.88 });
     const slitGlow = new THREE.MeshStandardMaterial({
       color: 0x7dd3fc,
       emissive: 0x38bdf8,
       emissiveIntensity: 1.5,
+    });
+    const iceSpireMat = new THREE.MeshPhysicalMaterial({
+      color: 0x99d9f8,
+      emissive: 0x0c4a6e,
+      emissiveIntensity: 0.32,
+      roughness: 0.16,
+      metalness: 0.18,
+      clearcoat: 0.85,
+      envMapIntensity: 0.95,
     });
 
     const domeLocations: Array<[number, number, number]> = [
@@ -842,6 +1145,23 @@ function buildWorldLandmarks(track: TrackData): THREE.Group {
       slit.position.set(0, radius * 1.32, radius * 0.12);
       obs.add(slit);
       group.add(obs);
+    }
+
+    // Dramatic crystalline glacial ice spires flanking the twilight alpine ridge
+    const spireSpots: Array<[number, number, number, number]> = [
+      [-64, -95, 10, 34],
+      [88, 72, 12, 42],
+      [155, 250, 14, 48],
+      [340, 110, 15, 52],
+      [110, -280, 12, 38],
+      [-85, 220, 11, 36],
+    ];
+    for (const [sx, sz, rad, h] of spireSpots) {
+      const gy = groundHeightAt(track, sx, sz);
+      const spire = new THREE.Mesh(new THREE.ConeGeometry(rad, h, 5), iceSpireMat);
+      spire.position.set(sx, gy + h * 0.35 - 4, sz);
+      spire.rotation.set(0.08, sx * 0.1, -0.06);
+      group.add(spire);
     }
   }
 
@@ -975,7 +1295,20 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
     course.curbSecondary,
     maxAnisotropy,
   );
-  ownedTextures.push(roadTex.albedo, roadTex.bump, roadTex.curb, roadTex.startGrid);
+  const terrainTex = createTerrainDetailTextures(maxAnisotropy);
+  const chevronTex = createChevronSignTexture(course.accentHex, maxAnisotropy);
+  const timingTex = createTimingTowerTexture(course.name, course.accentHex, maxAnisotropy);
+  ownedTextures.push(
+    roadTex.albedo,
+    roadTex.bump,
+    roadTex.roughness,
+    roadTex.curb,
+    roadTex.startGrid,
+    terrainTex.albedo,
+    terrainTex.bump,
+    chevronTex,
+    timingTex,
+  );
 
   // 1. Procedural GLSL Atmospheric Sky Dome (Rayleigh + Sun + Clouds + Aurora + Stars)
   const skyUniforms = {
@@ -1006,8 +1339,8 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
   const skyDome = new THREE.Mesh(skyGeo, skyMat);
   group.add(skyDome);
 
-  // 2. Sculpted extended natural terrain skirt
-  const terrain = createTerrainMesh(track);
+  // 2. Sculpted extended natural terrain skirt with geological micro-detail texture + bump
+  const terrain = createTerrainMesh(track, terrainTex.albedo, terrainTex.bump);
   group.add(terrain);
 
   // 2b. Animated GLSL Turquoise Ocean Lagoon for Sunken Glass Coast
@@ -1044,7 +1377,7 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
     group.add(waterMesh);
   }
 
-  // 3. Banked asphalt road, curbs, shoulders & guardrails
+  // 3. Banked asphalt road with racing-groove roughness sheen, curbs, shoulders & steel guardrails
   const halfRoad = course.roadWidth * 0.5;
   const shoulderOuter = halfRoad + course.shoulderWidth;
 
@@ -1053,9 +1386,10 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
     color: 0xffffff,
     map: roadTex.albedo,
     bumpMap: roadTex.bump,
-    bumpScale: 0.055,
-    roughness: 0.8,
-    metalness: 0.07,
+    bumpScale: 0.06,
+    roughness: 0.88,
+    roughnessMap: roadTex.roughness,
+    metalness: 0.08,
   });
   const asphaltMesh = new THREE.Mesh(asphaltGeo, asphaltMat);
   asphaltMesh.receiveShadow = true;
@@ -1081,17 +1415,48 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
 
   const railMat = new THREE.MeshStandardMaterial({
     color: 0xcbd3dc,
-    roughness: 0.4,
-    metalness: 0.6,
+    roughness: 0.36,
+    metalness: 0.68,
     side: THREE.DoubleSide,
   });
   group.add(new THREE.Mesh(createGuardrailGeometry(track, -shoulderOuter, 0.92), railMat));
   group.add(new THREE.Mesh(createGuardrailGeometry(track, shoulderOuter, 0.92), railMat));
 
-  // 4. Starting Gantry + Checkered Grid + 7 Checkpoint Arches
+  // 3b. Bolted steel I-beam stanchions anchoring both guardrails
+  const stanchionStep = 2;
+  const stanchionCount = Math.floor(track.samples.length / stanchionStep) * 2;
+  const stanchionGeo = new THREE.BoxGeometry(0.14, 1.05, 0.14);
+  stanchionGeo.translate(0, 0.45, 0);
+  const stanchionMat = new THREE.MeshStandardMaterial({ color: 0x3b4452, roughness: 0.55, metalness: 0.75 });
+  const stanchions = new THREE.InstancedMesh(stanchionGeo, stanchionMat, stanchionCount);
+  const sDummy = new THREE.Object3D();
+  let stIdx = 0;
+  for (let i = 0; i < track.samples.length && stIdx < stanchionCount - 1; i += stanchionStep) {
+    const s = track.samples[i];
+    const yaw = Math.atan2(s.tangent.x, s.tangent.z);
+    for (const side of [-1, 1]) {
+      const lat = side * (shoulderOuter + 0.06);
+      sDummy.position.set(
+        s.pos.x + s.right.x * lat,
+        s.pos.y + Math.sin(s.bankAngle) * lat - 0.05,
+        s.pos.z + s.right.z * lat,
+      );
+      sDummy.rotation.set(0, yaw, 0);
+      sDummy.scale.setScalar(1);
+      sDummy.updateMatrix();
+      stanchions.setMatrixAt(stIdx++, sDummy.matrix);
+    }
+  }
+  stanchions.instanceMatrix.needsUpdate = true;
+  stanchions.computeBoundingSphere();
+  group.add(stanchions);
+
+  // 4. Starting Gantry + Checkered Grid + Motorsport Timing Pavilion + 7 Checkpoint Arches + Corner Chevrons
   const bannerTex = createStartBannerTexture(course.name, course.accentHex, maxAnisotropy);
   ownedTextures.push(bannerTex);
   group.add(buildStartingGantry(track, 36, bannerTex, roadTex.startGrid, course.accentHex));
+  group.add(buildTimingPavilion(track, 48, timingTex, course.accentHex));
+  group.add(buildCornerChevrons(track, chevronTex));
 
   for (let c = 1; c < track.checkpointCount; c++) {
     group.add(buildCheckpointArch(track, track.checkpointDistances[c], course.accentHex));

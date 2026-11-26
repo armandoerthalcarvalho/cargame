@@ -35,6 +35,7 @@ const INITIAL_TELEMETRY: HudTelemetry = {
   totalRacers: 4,
   lap: 1,
   totalLaps: 3,
+  lapProgress: 0,
   elapsedTime: 0,
   currentLapTime: 0,
   bestLapTime: null,
@@ -199,6 +200,9 @@ export default function App() {
           selectedCourse={courseId}
           selectedMode={mode}
           timeOfDay={timeOfDay}
+          trackLengthMeters={trackData?.totalLength ?? null}
+          liveryConfig={liveryConfig}
+          radioStation={radioStation}
           onSelectCourse={handleSelectCourse}
           onSelectMode={handleSelectMode}
           onSelectTimeOfDay={handleSelectTimeOfDay}
@@ -229,9 +233,11 @@ export default function App() {
         <PauseModal
           courseName={COURSES[courseId].name}
           mode={mode}
+          timeOfDay={timeOfDay}
           lap={telemetry.lap}
           totalLaps={telemetry.totalLaps}
           elapsedTime={telemetry.elapsedTime}
+          onSelectTimeOfDay={handleSelectTimeOfDay}
           onResume={handleResume}
           onRestart={handleStart}
           onOpenGarage={() => setGarageOpen(true)}

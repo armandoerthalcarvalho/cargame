@@ -1,5 +1,9 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { DrivingAudioEngine } from '../game/audio';
 import { COURSES, LIVERY_PRESETS } from '../game/courses';
 import { headingToForward, headingToRight } from '../game/physics';
@@ -23,7 +27,7 @@ import { buildCompositeCar, syncCarRigToState } from './carBuilder';
 import type { CarMeshRig } from './carBuilder';
 import { buildCourseEnvironment } from './environmentBuilder';
 import type { CourseEnvironment } from './environmentBuilder';
-import { createContactShadowTexture } from './textures';
+import { createContactShadowTexture, createHeadlightBeamTexture } from './textures';
 
 export interface EngineCallbacks {
   onPhaseChange: (phase: GamePhase) => void;
@@ -70,12 +74,16 @@ export class SolsticeSceneEngine {
   private isSoftwareGl: boolean;
 
   private renderer: THREE.WebGLRenderer | null = null;
+  private composer: EffectComposer | null = null;
+  private bloomPass: UnrealBloomPass | null = null;
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
   private sunLight: THREE.DirectionalLight;
+  private rimLight: THREE.DirectionalLight;
   private hemiLight: THREE.HemisphereLight;
   private envTexture: THREE.Texture | null = null;
   private contactShadowTex: THREE.CanvasTexture;
+  private headlightBeamTex: THREE.CanvasTexture;
 
   private courseId: CourseId = 'sunstone-canyon';
   private gameMode: GameMode = 'grand-prix';
@@ -137,7 +145,7 @@ export class SolsticeSceneEngine {
 
     this.sunLight = new THREE.DirectionalLight(0xffdfb0, 2.4);
     this.sunLight.castShadow = !this.isSoftwareGl;
-    this.sunLight.shadow.mapSize.set(1024, 1024);
+    this.sunLight.shadow.mapSize.set(2048, 2048);
     this.sunLight.shadow.camera.near = 10;
     this.sunLight.shadow.camera.far = 320;
     const d = 62;
@@ -150,7 +158,13 @@ export class SolsticeSceneEngine {
     this.scene.add(this.sunLight);
     this.scene.add(this.sunLight.target);
 
+    // Subtle opposing 3-point rim light to carve sharp highlights along GT bodywork
+    this.rimLight = new THREE.DirectionalLight(0x9ac8ff, 0.56);
+    this.scene.add(this.rimLight);
+    this.scene.add(this.rimLight.target);
+
     this.contactShadowTex = createContactShadowTexture();
+    this.headlightBeamTex = createHeadlightBeamTexture();
     this.track = buildTrack(COURSES[this.courseId]);
     this.world = createRaceWorld(
       this.track,
@@ -215,6 +229,22 @@ export class SolsticeSceneEngine {
       this.envTexture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
       this.scene.environment = this.envTexture;
       pmrem.dispose();
+
+      // Cinematic selective-threshold Bloom + ACES OutputPass on hardware GPUs (zero stall on SwiftShader)
+      if (!this.isSoftwareGl) {
+        const composer = new EffectComposer(renderer);
+        composer.addPass(new RenderPass(this.scene, this.camera));
+        const bloom = new UnrealBloomPass(
+          new THREE.Vector2(Math.floor(width * 0.5), Math.floor(height * 0.5)),
+          0.32,
+          0.52,
+          0.92,
+        );
+        composer.addPass(bloom);
+        composer.addPass(new OutputPass());
+        this.composer = composer;
+        this.bloomPass = bloom;
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unable to initialize WebGL context.';
       this.callbacks.onWebglError(msg);
@@ -250,7 +280,9 @@ export class SolsticeSceneEngine {
     let hemiIntensity = course.hemiIntensity;
     let auroraStrength = course.hasAurora ? 1.0 : 0.0;
     let starStrength = course.hasAurora ? 0.75 : 0.0;
-    let headlightIntensity = 1.65;
+    let headlightIntensity = 1.75;
+    let beamOpacity = course.hasAurora ? 0.34 : 0.14;
+    let bloomStrength = course.hasAurora ? 0.42 : 0.32;
 
     _sunDirScratch.set(course.sunPosition.x, course.sunPosition.y, course.sunPosition.z);
 
@@ -265,7 +297,9 @@ export class SolsticeSceneEngine {
       hemiIntensity = 1.18;
       auroraStrength = 0.0;
       starStrength = 0.0;
-      headlightIntensity = 1.1;
+      headlightIntensity = 1.0;
+      beamOpacity = 0.0;
+      bloomStrength = 0.22;
       _sunDirScratch.set(course.sunPosition.x * 0.5, 290, course.sunPosition.z * 0.5);
     } else if (this.timeOfDay === 'twilight') {
       topHex = '#070f24';
@@ -278,7 +312,9 @@ export class SolsticeSceneEngine {
       hemiIntensity = 0.88;
       auroraStrength = course.hasAurora ? 1.25 : 0.65;
       starStrength = 1.0;
-      headlightIntensity = 3.2;
+      headlightIntensity = 3.4;
+      beamOpacity = 0.48;
+      bloomStrength = 0.48;
       _sunDirScratch.set(course.sunPosition.x, 42, course.sunPosition.z);
     }
 
@@ -286,9 +322,15 @@ export class SolsticeSceneEngine {
     this.scene.fog = new THREE.FogExp2(fogHex, fogDensity);
     this.sunLight.color.set(sunHex);
     this.sunLight.intensity = sunIntensity;
+    this.rimLight.color.set(this.timeOfDay === 'twilight' ? '#7ec4ff' : '#d6eaff');
+    this.rimLight.intensity = this.timeOfDay === 'twilight' ? 0.72 : 0.52;
     this.hemiLight.color.set(this.timeOfDay === 'twilight' ? '#7aa4e8' : course.hemiSkyColor);
     this.hemiLight.groundColor.set(course.hemiGroundColor);
     this.hemiLight.intensity = hemiIntensity;
+
+    if (this.bloomPass) {
+      this.bloomPass.strength = bloomStrength;
+    }
 
     this.courseEnv?.setAtmosphere({
       topHex,
@@ -301,7 +343,7 @@ export class SolsticeSceneEngine {
     });
 
     for (const rig of this.carRigs.values()) {
-      rig.setHeadlightBoost(headlightIntensity);
+      rig.setHeadlightBoost(headlightIntensity, beamOpacity);
     }
   }
 
@@ -333,21 +375,26 @@ export class SolsticeSceneEngine {
     this.courseEnv = buildCourseEnvironment(this.track, maxAniso);
     this.scene.add(this.courseEnv.group);
 
-    // Spawn composite 3D cars for player + rivals
+    // Spawn composite 22-part 3D cars for player + rivals
+    const rivalNumbers = ['11', '42', '88'];
     const allCars = [this.world.player, ...this.world.rivals];
-    for (const car of allCars) {
+    allCars.forEach((car, idx) => {
       const rig = buildCompositeCar({
         bodyColor: car.colorHex,
         accentColor: car.accentHex,
         contactShadowTex: this.contactShadowTex,
+        headlightBeamTex: this.headlightBeamTex,
         maxAnisotropy: maxAniso,
         initialConfig: car.isPlayer ? this.liveryConfig : undefined,
+        racingNumber: car.isPlayer
+          ? this.liveryConfig.racingNumber
+          : rivalNumbers[(idx - 1) % rivalNumbers.length],
       });
       const sample = sampleTrackAtDistance(this.track, car.trackS);
       syncCarRigToState(rig, car, sample.bankAngle, false, 0);
       this.scene.add(rig.root);
       this.carRigs.set(car.id, rig);
-    }
+    });
 
     this.applyAtmosphereLighting();
 
@@ -369,6 +416,33 @@ export class SolsticeSceneEngine {
     if (open) {
       this.keysHeld.clear();
     }
+    if (this.phase === 'title') {
+      if (open) {
+        this.snapCameraToShowroom();
+      } else {
+        this.snapCameraToTitle();
+      }
+    }
+  }
+
+  private snapCameraToShowroom(): void {
+    const p = this.world.player;
+    const fwd = headingToForward(p.heading);
+    const right = headingToRight(p.heading);
+    const azim = 0.64;
+    const radius = 6.2;
+    this.camera.position.set(
+      p.x + fwd.x * Math.cos(azim) * radius + right.x * Math.sin(azim) * radius,
+      p.y + 1.58,
+      p.z + fwd.z * Math.cos(azim) * radius + right.z * Math.sin(azim) * radius,
+    );
+    const toCarX = p.x - this.camera.position.x;
+    const toCarZ = p.z - this.camera.position.z;
+    const len = Math.hypot(toCarX, toCarZ) || 1;
+    const camRightX = -toCarZ / len;
+    const camRightZ = toCarX / len;
+    _camLook.set(p.x - camRightX * 1.48, p.y + 0.78, p.z - camRightZ * 1.48);
+    this.camera.lookAt(_camLook);
   }
 
   public applyLivery(config: LiveryConfig): void {
@@ -565,6 +639,12 @@ export class SolsticeSceneEngine {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
+    if (this.composer) {
+      this.composer.setSize(width, height);
+    }
+    if (this.bloomPass) {
+      this.bloomPass.resolution.set(Math.floor(width * 0.5), Math.floor(height * 0.5));
+    }
   };
 
   private bindEvents(): void {
@@ -601,14 +681,20 @@ export class SolsticeSceneEngine {
 
   private snapCameraToTitle(): void {
     const p = this.world.player;
-    const angle = this.titleOrbitAngle;
-    const radius = 8.4;
+    const fwd = headingToForward(p.heading);
+    const right = headingToRight(p.heading);
+    const angle = 0.42;
+    const radius = 8.6;
     this.camera.position.set(
-      p.x + Math.sin(angle) * radius - 2.2,
-      p.y + 2.85,
-      p.z - Math.cos(angle) * radius,
+      p.x - fwd.x * Math.cos(angle) * radius - right.x * Math.sin(angle) * radius,
+      p.y + 2.8,
+      p.z - fwd.z * Math.cos(angle) * radius - right.z * Math.sin(angle) * radius,
     );
-    _camLook.set(p.x - 1.4, p.y + 1.15, p.z + 2.8);
+    _camLook.set(
+      p.x + fwd.x * 5.0 - right.x * 1.4,
+      p.y + 1.2,
+      p.z + fwd.z * 5.0 - right.z * 1.4,
+    );
     this.camera.lookAt(_camLook);
     this.camera.fov = 54;
     this.camera.updateProjectionMatrix();
@@ -629,17 +715,54 @@ export class SolsticeSceneEngine {
     const p = this.world.player;
 
     if (this.phase === 'title') {
+      const fwd = headingToForward(p.heading);
+      const right = headingToRight(p.heading);
+
+      if (this.modalOpen) {
+        // Front-right 3/4 showroom hero shot with lookAt shifted camera-left so the GT supercar
+        // sits cleanly centered in the open right 60% of the screen beside the Garage drawer
+        this.titleOrbitAngle += dt * 0.24;
+        const azim = 0.64 + Math.sin(this.titleOrbitAngle) * 0.22;
+        const radius = 6.2;
+        _camDesired.set(
+          p.x + fwd.x * Math.cos(azim) * radius + right.x * Math.sin(azim) * radius,
+          p.y + 1.58 + Math.sin(elapsed * 0.55) * 0.06,
+          p.z + fwd.z * Math.cos(azim) * radius + right.z * Math.sin(azim) * radius,
+        );
+        const damp = 1 - Math.exp(-5.5 * dt);
+        this.camera.position.lerp(_camDesired, damp);
+
+        // Compute camera-right vector from current camera to car, then shift lookAt camera-left
+        const toCarX = p.x - this.camera.position.x;
+        const toCarZ = p.z - this.camera.position.z;
+        const len = Math.hypot(toCarX, toCarZ) || 1;
+        // cross((toCarX, 0, toCarZ), (0, 1, 0)) = (-toCarZ, 0, toCarX) = camera-right
+        const camRightX = -toCarZ / len;
+        const camRightZ = toCarX / len;
+        _camLook.set(
+          p.x - camRightX * 1.48,
+          p.y + 0.78,
+          p.z - camRightZ * 1.48,
+        );
+        this.camera.lookAt(_camLook);
+        return;
+      }
+
       this.titleOrbitAngle += dt * 0.14;
-      const sway = Math.sin(this.titleOrbitAngle) * 0.45 + 0.48;
+      const sway = Math.sin(this.titleOrbitAngle) * 0.38 + 0.42;
       const radius = 8.8;
       _camDesired.set(
-        p.x + Math.sin(sway) * radius - 1.6,
-        p.y + 2.8 + Math.sin(elapsed * 0.5) * 0.25,
-        p.z - Math.cos(sway) * radius,
+        p.x - fwd.x * Math.cos(sway) * radius - right.x * Math.sin(sway) * radius,
+        p.y + 2.85 + Math.sin(elapsed * 0.5) * 0.22,
+        p.z - fwd.z * Math.cos(sway) * radius - right.z * Math.sin(sway) * radius,
       );
-      const damp = 1 - Math.exp(-3.5 * dt);
+      const damp = 1 - Math.exp(-3.8 * dt);
       this.camera.position.lerp(_camDesired, damp);
-      _camLook.set(p.x - 1.2, p.y + 1.15, p.z + 4.0);
+      _camLook.set(
+        p.x + fwd.x * 5.2 - right.x * 1.45,
+        p.y + 1.2,
+        p.z + fwd.z * 5.2 - right.z * 1.45,
+      );
       this.camera.lookAt(_camLook);
       return;
     }
@@ -779,6 +902,7 @@ export class SolsticeSceneEngine {
       totalRacers: allCars.length,
       lap: p.lap,
       totalLaps: this.world.totalLaps,
+      lapProgress: Math.max(0, Math.min(1, p.trackS / Math.max(1, this.track.totalLength))),
       elapsedTime: this.world.elapsedTime,
       currentLapTime: Math.max(0, this.world.elapsedTime - p.lapStartTime),
       bestLapTime: p.bestLapTime,
@@ -808,6 +932,15 @@ export class SolsticeSceneEngine {
     );
     this.sunLight.target.position.set(p.x, p.y, p.z);
     this.sunLight.target.updateMatrixWorld();
+
+    // Opposing cool rim backlight anchored around player for crisp silhouette highlights
+    this.rimLight.position.set(
+      p.x - _sunDirScratch.x * 0.55,
+      p.y + 38,
+      p.z - _sunDirScratch.z * 0.55,
+    );
+    this.rimLight.target.position.set(p.x, p.y + 0.8, p.z);
+    this.rimLight.target.updateMatrixWorld();
   }
 
   private tick = () => {
@@ -922,7 +1055,9 @@ export class SolsticeSceneEngine {
     this.updateCamera(dt, elapsedSec);
     this.updateSunShadowAnchor();
 
-    if (this.renderer) {
+    if (this.composer && !this.isSoftwareGl) {
+      this.composer.render();
+    } else if (this.renderer) {
       this.renderer.render(this.scene, this.camera);
     }
 
@@ -978,7 +1113,13 @@ export class SolsticeSceneEngine {
     this.audio.dispose();
     this.clearCourseObjects();
     this.contactShadowTex.dispose();
+    this.headlightBeamTex.dispose();
     if (this.envTexture) this.envTexture.dispose();
+    if (this.composer) {
+      this.composer.dispose();
+      this.composer = null;
+      this.bloomPass = null;
+    }
 
     if (this.renderer) {
       this.renderer.dispose();
