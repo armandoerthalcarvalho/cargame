@@ -363,7 +363,7 @@ export function stepVehiclePhysics(
   // Project onto track corridor for elevation, surface type, and guardrail containment
   const proj = projectToTrack(track, car.x, car.z, car.trackIndex);
   const halfAsphalt = track.course.roadWidth * 0.5;
-  const barrierLimit = halfAsphalt + track.course.shoulderWidth - 0.9;
+  const barrierLimit = halfAsphalt + track.course.shoulderWidth - 1.25;
 
   let surface: SurfaceType = 'asphalt';
   const absLat = Math.abs(proj.lateral);

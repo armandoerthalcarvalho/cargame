@@ -944,3 +944,416 @@ export function createLiveryTexture(
   tex.anisotropy = maxAnisotropy;
   return tex;
 }
+
+export function createCarbonWeaveTexture(maxAnisotropy: number): {
+  albedo: THREE.CanvasTexture;
+  bump: THREE.CanvasTexture;
+} {
+  // Authentic 2x2 diagonal twill motorsport carbon fiber weave
+  const size = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+
+  const bumpCanvas = document.createElement('canvas');
+  bumpCanvas.width = size;
+  bumpCanvas.height = size;
+  const bctx = bumpCanvas.getContext('2d')!;
+
+  ctx.fillStyle = '#12161d';
+  ctx.fillRect(0, 0, size, size);
+  bctx.fillStyle = '#505050';
+  bctx.fillRect(0, 0, size, size);
+
+  const cell = 8;
+  for (let y = 0; y < size; y += cell) {
+    const row = Math.floor(y / cell);
+    for (let x = 0; x < size; x += cell) {
+      const col = Math.floor(x / cell);
+      const phase = (col + row) % 4;
+      const isWarp = phase < 2;
+
+      if (isWarp) {
+        const g = ctx.createLinearGradient(x, y, x + cell, y);
+        g.addColorStop(0, '#141922');
+        g.addColorStop(0.5, '#313a49');
+        g.addColorStop(1, '#141922');
+        ctx.fillStyle = g;
+        ctx.fillRect(x, y, cell, cell - 1);
+
+        bctx.fillStyle = '#c8c8c8';
+        bctx.fillRect(x + 1, y + 1, cell - 2, cell - 2);
+      } else {
+        const g = ctx.createLinearGradient(x, y, x, y + cell);
+        g.addColorStop(0, '#0f131a');
+        g.addColorStop(0.5, '#242b37');
+        g.addColorStop(1, '#0f131a');
+        ctx.fillStyle = g;
+        ctx.fillRect(x, y, cell - 1, cell);
+
+        bctx.fillStyle = '#909090';
+        bctx.fillRect(x + 1, y + 1, cell - 2, cell - 2);
+      }
+    }
+  }
+
+  const albedo = new THREE.CanvasTexture(canvas);
+  albedo.colorSpace = THREE.SRGBColorSpace;
+  albedo.wrapS = THREE.RepeatWrapping;
+  albedo.wrapT = THREE.RepeatWrapping;
+  albedo.repeat.set(5, 5);
+  albedo.anisotropy = maxAnisotropy;
+
+  const bump = new THREE.CanvasTexture(bumpCanvas);
+  bump.wrapS = THREE.RepeatWrapping;
+  bump.wrapT = THREE.RepeatWrapping;
+  bump.repeat.set(5, 5);
+  bump.anisotropy = maxAnisotropy;
+
+  return { albedo, bump };
+}
+
+export function createBrakeRotorTexture(maxAnisotropy: number): THREE.CanvasTexture {
+  // Cross-drilled and slotted carbon-ceramic/steel GT brake disc
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const cx = size / 2;
+  const cy = size / 2;
+
+  ctx.fillStyle = '#8b94a3';
+  ctx.fillRect(0, 0, size, size);
+
+  // Concentric brushed machining grooves
+  for (let r = 42; r < 124; r += 2) {
+    const v = 128 + Math.round(Math.sin(r * 0.9) * 22);
+    ctx.strokeStyle = `rgb(${v},${v + 3},${v + 7})`;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Dark anodized inner rotor hat & hub bolts
+  ctx.fillStyle = '#242a34';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 44, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#475162';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  // Cross-drilled ventilation hole arcs (12 swept radial rows)
+  ctx.fillStyle = '#181d25';
+  for (let s = 0; s < 12; s++) {
+    const baseAngle = (s / 12) * Math.PI * 2;
+    for (let k = 0; k < 4; k++) {
+      const rr = 58 + k * 16;
+      const ang = baseAngle + k * 0.085;
+      ctx.beginPath();
+      ctx.arc(cx + Math.cos(ang) * rr, cy + Math.sin(ang) * rr, 3.1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAnisotropy;
+  return tex;
+}
+
+export function createTireTreadTexture(maxAnisotropy: number): THREE.CanvasTexture {
+  // Semi-slick GT racing tire tread with twin circumferential grooves & angled shoulder sipes
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d')!;
+  const rand = seededRand(5151);
+
+  ctx.fillStyle = '#191c22';
+  ctx.fillRect(0, 0, 256, 256);
+
+  // Fine vulcanized rubber micro-grain
+  for (let i = 0; i < 4200; i++) {
+    const v = Math.floor(18 + rand() * 24);
+    ctx.fillStyle = `rgb(${v},${v + 1},${v + 3})`;
+    ctx.fillRect(rand() * 256, rand() * 256, 2, 2);
+  }
+
+  // Twin longitudinal water-evacuation grooves
+  ctx.fillStyle = '#090b0e';
+  ctx.fillRect(0, 88, 256, 12);
+  ctx.fillRect(0, 156, 256, 12);
+
+  // Subtle angled motorsport shoulder sipes
+  ctx.strokeStyle = '#0a0c10';
+  ctx.lineWidth = 4;
+  for (let x = -32; x < 288; x += 24) {
+    ctx.beginPath();
+    ctx.moveTo(x, 22);
+    ctx.lineTo(x + 18, 76);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(x + 18, 180);
+    ctx.lineTo(x, 234);
+    ctx.stroke();
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(4, 1);
+  tex.anisotropy = maxAnisotropy;
+  return tex;
+}
+
+export function createCockpitDashTexture(
+  accentHex: string,
+  maxAnisotropy: number,
+): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.fillStyle = '#0a0e16';
+  ctx.fillRect(0, 0, 256, 64);
+
+  // Subtle GT telemetry RPM bar
+  const segs = 14;
+  for (let i = 0; i < segs; i++) {
+    ctx.fillStyle = i < 8 ? '#22c55e' : i < 12 ? '#f59e0b' : '#ef4444';
+    ctx.fillRect(14 + i * 16, 10, 11, 10);
+  }
+
+  ctx.fillStyle = accentHex;
+  ctx.font = '800 24px JetBrains Mono, monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('GT-R  04', 128, 44);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAnisotropy;
+  return tex;
+}
+
+export function createConcreteFormworkTexture(maxAnisotropy: number): {
+  albedo: THREE.CanvasTexture;
+  bump: THREE.CanvasTexture;
+} {
+  // Architectural board-formed cast concrete with subtle panel joints & formwork tie-rod dimples
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const rand = seededRand(8123);
+
+  ctx.fillStyle = '#c4bfb5';
+  ctx.fillRect(0, 0, size, size);
+
+  // Soft mineral mottling & cement patina
+  for (let i = 0; i < 160; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const r = 18 + rand() * 48;
+    const v = rand() > 0.5 ? 222 : 162;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, `rgba(${v},${v - 2},${v - 6},0.10)`);
+    g.addColorStop(1, `rgba(${v},${v - 2},${v - 6},0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Fine mineral grain
+  for (let i = 0; i < 9000; i++) {
+    const v = Math.floor(158 + rand() * 64);
+    ctx.fillStyle = `rgba(${v},${v - 2},${v - 5},0.14)`;
+    ctx.fillRect(rand() * size, rand() * size, 2, 2);
+  }
+
+  // Crisp architectural panel grid seams
+  ctx.strokeStyle = 'rgba(65,68,74,0.34)';
+  ctx.lineWidth = 2.5;
+  for (let y = 0; y < size; y += 128) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(size, y);
+    ctx.stroke();
+  }
+  for (let x = 0; x < size; x += 256) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, size);
+    ctx.stroke();
+  }
+
+  // Recessed circular tie-rod cones in each formwork panel
+  for (let py = 0; py < size; py += 128) {
+    for (let px = 0; px < size; px += 256) {
+      for (const [ox, oy] of [
+        [44, 38],
+        [212, 38],
+        [44, 90],
+        [212, 90],
+      ]) {
+        ctx.fillStyle = 'rgba(54,58,64,0.45)';
+        ctx.beginPath();
+        ctx.arc(px + ox, py + oy, 4.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  const albedo = new THREE.CanvasTexture(canvas);
+  albedo.colorSpace = THREE.SRGBColorSpace;
+  albedo.wrapS = THREE.RepeatWrapping;
+  albedo.wrapT = THREE.RepeatWrapping;
+  albedo.repeat.set(3, 2);
+  albedo.anisotropy = maxAnisotropy;
+
+  const bump = new THREE.CanvasTexture(canvas);
+  bump.wrapS = THREE.RepeatWrapping;
+  bump.wrapT = THREE.RepeatWrapping;
+  bump.repeat.set(3, 2);
+  bump.anisotropy = maxAnisotropy;
+
+  return { albedo, bump };
+}
+
+export function createTimberSoffitTexture(maxAnisotropy: number): THREE.CanvasTexture {
+  // Architectural slatted cedar/walnut ceiling soffit with dark acoustic shadow reveals
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d')!;
+  const rand = seededRand(4412);
+
+  ctx.fillStyle = '#20150e';
+  ctx.fillRect(0, 0, 256, 256);
+
+  const slatW = 16;
+  for (let x = 0; x < 256; x += slatW) {
+    const r = Math.floor(116 + rand() * 34);
+    const g = Math.floor(74 + rand() * 24);
+    const b = Math.floor(44 + rand() * 18);
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.fillRect(x + 2, 0, slatW - 4, 256);
+
+    // Longitudinal wood grain streaks
+    for (let k = 0; k < 18; k++) {
+      ctx.fillStyle = rand() > 0.5 ? 'rgba(255,220,180,0.06)' : 'rgba(24,14,8,0.12)';
+      ctx.fillRect(x + 2 + rand() * (slatW - 5), 0, 1.5, 256);
+    }
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(6, 3);
+  tex.anisotropy = maxAnisotropy;
+  return tex;
+}
+
+export function createPennantFlagTexture(
+  accentHex: string,
+  variant: number,
+  maxAnisotropy: number,
+): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d')!;
+
+  if (variant % 3 === 0) {
+    // Classic motorsport checkered flag
+    const sq = 32;
+    for (let r = 0; r < 4; r++) {
+      for (let c = 0; c < 8; c++) {
+        ctx.fillStyle = (r + c) % 2 === 0 ? '#ebe7de' : '#181c24';
+        ctx.fillRect(c * sq, r * sq, sq, sq);
+      }
+    }
+  } else if (variant % 3 === 1) {
+    // Solstice circuit pennant with diagonal stripe
+    ctx.fillStyle = '#151c28';
+    ctx.fillRect(0, 0, 256, 128);
+    ctx.fillStyle = accentHex;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(148, 0);
+    ctx.lineTo(96, 128);
+    ctx.lineTo(0, 128);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#ebe7de';
+    ctx.fillRect(0, 108, 256, 10);
+  } else {
+    // Warm cream & accent racing banner
+    ctx.fillStyle = '#e8e3d8';
+    ctx.fillRect(0, 0, 256, 128);
+    ctx.fillStyle = accentHex;
+    ctx.fillRect(0, 44, 256, 40);
+    ctx.fillStyle = '#161b24';
+    ctx.fillRect(0, 36, 256, 8);
+    ctx.fillRect(0, 84, 256, 8);
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAnisotropy;
+  return tex;
+}
+
+export function createDelineatorPostTexture(maxAnisotropy: number): THREE.CanvasTexture {
+  // Motorsport flexible roadside delineator bollard: vulcanized black rubber base + bright white/safety-orange bands
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d')!;
+
+  // High-density white polymer cylinder shaft
+  ctx.fillStyle = '#e7e8ec';
+  ctx.fillRect(0, 0, 64, 256);
+
+  // Subtle vertical shading seam for cylindrical depth
+  const grad = ctx.createLinearGradient(0, 0, 64, 0);
+  grad.addColorStop(0, 'rgba(0,0,0,0.08)');
+  grad.addColorStop(0.5, 'rgba(255,255,255,0.06)');
+  grad.addColorStop(1, 'rgba(0,0,0,0.08)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 64, 256);
+
+  // Safety-orange retroreflective motorsport collar bands (top & upper-mid)
+  ctx.fillStyle = '#e85d1a';
+  ctx.fillRect(0, 26, 64, 42);
+  ctx.fillRect(0, 94, 64, 34);
+
+  // Crisp silver retroreflective micro-stripe inside upper collar
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillRect(0, 42, 64, 10);
+
+  // Matte black flexible rubber base boot
+  ctx.fillStyle = '#1b1f27';
+  ctx.fillRect(0, 210, 64, 46);
+
+  // Dark rubber top cap rim
+  ctx.fillStyle = '#252a34';
+  ctx.fillRect(0, 0, 64, 12);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAnisotropy;
+  return tex;
+}
+
+

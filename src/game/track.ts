@@ -337,11 +337,11 @@ export function groundHeightAt(track: TrackData, x: number, z: number): number {
   const absLat = Math.abs(proj.lateral);
   const halfRoad = track.course.roadWidth * 0.5 + track.course.shoulderWidth;
 
-  if (absLat <= halfRoad + 2.0) {
-    return proj.roadY - 0.16;
+  if (absLat <= halfRoad + 6.0) {
+    return proj.roadY - 0.18;
   }
 
-  const blend = Math.min(1, (absLat - (halfRoad + 2.0)) / 26);
+  const blend = Math.min(1, (absLat - (halfRoad + 6.0)) / 30);
   const smooth = blend * blend * (3 - 2 * blend);
 
   // Layered natural mountain synthesis (broad geological massifs + smooth organic ridge folds, zero sawtooth spikes)

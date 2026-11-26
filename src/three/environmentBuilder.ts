@@ -1,15 +1,21 @@
 import * as THREE from 'three';
+import { COURSE_LANDMARKS, computeLandmarkTrackClearance } from '../game/landmarks';
 import { groundHeightAt, sampleTrackAtDistance } from '../game/track';
 import type { TrackData } from '../game/track';
+import type { RoadsidePostState } from '../game/types';
 import {
   createBrakingSignTexture,
   createChevronSignTexture,
+  createConcreteFormworkTexture,
+  createDelineatorPostTexture,
   createFoliageTextures,
+  createPennantFlagTexture,
   createPitBayHeaderTexture,
   createRoadTextures,
   createSponsorBoardTexture,
   createStartBannerTexture,
   createTerrainDetailTextures,
+  createTimberSoffitTexture,
   createTimingTowerTexture,
 } from './textures';
 
@@ -46,6 +52,21 @@ export interface ParticlePool {
   dispose: () => void;
 }
 
+export interface SkidmarkPool {
+  mesh: THREE.InstancedMesh;
+  stamp: (
+    x: number,
+    y: number,
+    z: number,
+    heading: number,
+    bankAngle: number,
+    length: number,
+    width: number,
+  ) => void;
+  clear: () => void;
+  dispose: () => void;
+}
+
 export interface SkyAtmosphereConfig {
   topHex: string;
   midHex: string;
@@ -59,6 +80,8 @@ export interface SkyAtmosphereConfig {
 export interface CourseEnvironment {
   group: THREE.Group;
   particles: ParticlePool;
+  skidmarks: SkidmarkPool;
+  syncPosts: (posts: RoadsidePostState[]) => void;
   setAtmosphere: (cfg: SkyAtmosphereConfig) => void;
   update: (elapsed: number, dt: number, focusX: number, focusY: number, focusZ: number) => void;
   dispose: () => void;
@@ -128,34 +151,41 @@ void main() {
   vec3 dir = normalize(vWorldDir);
   float h = clamp(dir.y, 0.0, 1.0);
 
-  vec3 col = mix(uHorizonColor, uMidColor, smoothstep(0.0, 0.28, h));
-  col = mix(col, uTopColor, smoothstep(0.22, 0.85, h));
+  // Smooth Rayleigh atmospheric zenith-to-horizon gradient with warm horizon airglow band
+  vec3 col = mix(uHorizonColor, uMidColor, smoothstep(0.0, 0.26, h));
+  col = mix(col, uTopColor, smoothstep(0.20, 0.84, h));
 
-  // Natural non-blinding solar disc + gentle Mie scattering
+  // Natural non-blinding solar disc + layered Mie scattering aureole
   vec3 sDir = normalize(uSunDir);
   float sunDot = max(dot(dir, sDir), 0.0);
-  float sunHalo = pow(sunDot, 8.0) * 0.14 + pow(sunDot, 48.0) * 0.22;
+  float sunHalo = pow(sunDot, 7.0) * 0.14 + pow(sunDot, 44.0) * 0.22;
   float sunDisc = smoothstep(0.9974, 0.9994, sunDot);
-  float horizonGlow = exp(-abs(dir.y) * 9.5) * (0.1 + 0.16 * pow(sunDot, 3.0));
-  col += uSunColor * (sunHalo + sunDisc * 0.55 + horizonGlow * 0.18);
+  float horizonGlow = exp(-abs(dir.y) * 9.0) * (0.12 + 0.18 * pow(sunDot, 2.5));
+  col += uSunColor * (sunHalo + sunDisc * 0.52 + horizonGlow * 0.20);
 
-  // Volumetric multi-layer cumulus + wispy cirrus clouds with realistic shaded bellies
-  if (dir.y > 0.015) {
-    vec2 cloudUV = dir.xz / (dir.y + 0.16) * 0.9 + vec2(uTime * 0.009, uTime * 0.003);
+  // Volumetric 3D-lit cumulus clouds (sampled with directional sun-offset shading) + wispy cirrus
+  if (dir.y > 0.014) {
+    vec2 cloudUV = dir.xz / (dir.y + 0.155) * 0.92 + vec2(uTime * 0.0085, uTime * 0.0028);
     float c1 = fbm(cloudUV);
-    float c2 = fbm(cloudUV * 2.4 - vec2(uTime * 0.006, -uTime * 0.004));
-    float density = smoothstep(0.46, 0.78, c1 * 0.72 + c2 * 0.34);
-    float fade = smoothstep(0.015, 0.18, dir.y) * (1.0 - smoothstep(0.58, 0.95, dir.y));
-    float cloudMask = density * fade;
-    vec3 cloudShadow = mix(uMidColor * 0.72, uHorizonColor * 0.82, 0.4);
-    vec3 cloudBright = mix(uHorizonColor * 0.96, uSunColor * 1.04, pow(sunDot, 3.0) * 0.52 + 0.2);
-    float silverLining = smoothstep(0.44, 0.66, c1) * (1.0 - smoothstep(0.66, 0.88, c1)) * pow(sunDot, 4.0);
-    vec3 cloudCol = mix(cloudShadow, cloudBright, clamp(c2 * 0.82 + pow(sunDot, 2.0) * 0.32, 0.0, 1.0)) + uSunColor * silverLining * 0.28;
-    col = mix(col, cloudCol, cloudMask * 0.58);
+    float c2 = fbm(cloudUV * 2.35 - vec2(uTime * 0.0055, -uTime * 0.0038));
+    float density = smoothstep(0.45, 0.78, c1 * 0.70 + c2 * 0.36);
 
-    vec2 cirrusUV = dir.xz / (dir.y + 0.34) * vec2(1.9, 0.65) + vec2(uTime * 0.005, 0.0);
-    float cirrus = smoothstep(0.6, 0.85, fbm(cirrusUV)) * smoothstep(0.16, 0.42, dir.y) * 0.18;
-    col = mix(col, mix(uHorizonColor, uSunColor, 0.4) * 0.95, cirrus);
+    // Directional self-shadow offset toward the sun for realistic sunlit crests & shaded bellies
+    vec2 sunStep = normalize(sDir.xz + vec2(0.001)) * 0.14;
+    float cSun = fbm(cloudUV + sunStep);
+    float litRidge = clamp(0.55 + (c1 - cSun) * 2.4 + pow(sunDot, 2.0) * 0.35, 0.0, 1.0);
+
+    float fade = smoothstep(0.014, 0.17, dir.y) * (1.0 - smoothstep(0.56, 0.94, dir.y));
+    float cloudMask = density * fade;
+    vec3 cloudShadow = mix(uMidColor * 0.66, uHorizonColor * 0.76, 0.38);
+    vec3 cloudBright = mix(uHorizonColor * 0.98, uSunColor * 1.05, pow(sunDot, 3.0) * 0.54 + 0.22);
+    float silverLining = smoothstep(0.42, 0.64, c1) * (1.0 - smoothstep(0.64, 0.86, c1)) * pow(sunDot, 4.5);
+    vec3 cloudCol = mix(cloudShadow, cloudBright, litRidge) + uSunColor * silverLining * 0.26;
+    col = mix(col, cloudCol, cloudMask * 0.62);
+
+    vec2 cirrusUV = dir.xz / (dir.y + 0.32) * vec2(2.05, 0.62) + vec2(uTime * 0.0045, 0.0);
+    float cirrus = smoothstep(0.58, 0.84, fbm(cirrusUV)) * smoothstep(0.15, 0.44, dir.y) * 0.18;
+    col = mix(col, mix(uHorizonColor, uSunColor, 0.38) * 0.96, cirrus);
   }
 
   // Calm Aurora Borealis curtains (Glacier & Twilight)
@@ -171,14 +201,31 @@ void main() {
     col += auroraCol * curtain * shimmer * 0.44 * uAuroraStrength;
   }
 
-  // Crisp subtle twilight starfield
-  if (uStarStrength > 0.01 && dir.y > 0.15) {
-    vec2 starGrid = floor(dir.xz / (dir.y + 0.1) * 160.0);
+  // Celestial Twilight Sky: Milky Way dust ribbon, crescent moon & multi-tinted twinkling stars
+  if (uStarStrength > 0.01 && dir.y > 0.10) {
+    float zenithVis = smoothstep(0.10, 0.44, dir.y);
+    // Soft diagonal Milky Way band
+    float bandDist = abs(dir.x * 0.58 - dir.z * 0.52 + dir.y * 0.28 - 0.14);
+    float mwCore = exp(-bandDist * 7.5) * fbm(dir.xz * 4.2 + vec2(1.7, 3.1));
+    col += vec3(0.18, 0.24, 0.38) * mwCore * 0.42 * uStarStrength * zenithVis;
+
+    // Crisp Crescent Moon opposite the sun
+    vec3 moonDir = normalize(vec3(-sDir.x * 0.82, 0.46, -sDir.z * 0.82));
+    float mDot = dot(dir, moonDir);
+    float moonDisc = smoothstep(0.9983, 0.9989, mDot);
+    vec3 shadowDir = normalize(moonDir + vec3(0.022, 0.012, 0.0));
+    float moonCut = smoothstep(0.9981, 0.9987, dot(dir, shadowDir));
+    float crescent = max(0.0, moonDisc - moonCut * 0.92);
+    float moonGlow = pow(max(mDot, 0.0), 90.0) * 0.16;
+    col += vec3(0.88, 0.91, 0.98) * (crescent * 0.78 + moonGlow) * uStarStrength;
+
+    // Twinkling starfield
+    vec2 starGrid = floor(dir.xz / (dir.y + 0.1) * 175.0);
     float s = hash21(starGrid);
-    if (s > 0.994) {
-      float tw = 0.55 + 0.35 * sin(uTime * 2.4 + s * 90.0);
-      vec3 starTint = mix(vec3(0.78, 0.86, 0.96), vec3(0.95, 0.88, 0.76), fract(s * 31.7));
-      col += starTint * tw * 0.68 * uStarStrength * smoothstep(0.15, 0.48, dir.y);
+    if (s > 0.9935) {
+      float tw = 0.58 + 0.34 * sin(uTime * 2.6 + s * 95.0);
+      vec3 starTint = mix(vec3(0.78, 0.86, 0.98), vec3(0.98, 0.88, 0.74), fract(s * 31.7));
+      col += starTint * tw * 0.72 * uStarStrength * zenithVis;
     }
   }
 
@@ -207,6 +254,7 @@ const WATER_FRAG = /* glsl */ `
 uniform float uTime;
 uniform vec3 uShallowColor;
 uniform vec3 uDeepColor;
+uniform vec3 uHorizonColor;
 uniform vec3 uSunColor;
 uniform vec3 uSunDir;
 varying vec3 vWorldPos;
@@ -217,20 +265,28 @@ void main() {
   float r1 = sin(p.x * 2.1 + uTime * 1.45 + cos(p.y * 1.85 - uTime * 1.05));
   float r2 = cos(p.y * 2.65 - uTime * 1.15 + sin(p.x * 1.75 + uTime * 0.9));
   float r3 = sin((p.x - p.y) * 4.4 + uTime * 2.1) * 0.45;
-  vec3 n = normalize(vec3((r1 + r2 + r3) * 0.078, 1.0, (r2 - r1 + r3) * 0.078));
+  float r4 = cos((p.x + p.y) * 6.8 - uTime * 2.5) * 0.22;
+  vec3 n = normalize(vec3((r1 + r2 + r3 + r4) * 0.078, 1.0, (r2 - r1 + r3 - r4) * 0.078));
 
   vec3 viewDir = normalize(cameraPosition - vWorldPos);
-  float fresnel = pow(1.0 - max(dot(viewDir, n), 0.0), 3.4);
+  float fresnel = pow(1.0 - max(dot(viewDir, n), 0.0), 3.6);
 
-  vec3 base = mix(uDeepColor, uShallowColor, clamp(0.38 + 0.42 * fresnel + 0.1 * r1, 0.0, 1.0));
+  // Subtle underwater turquoise caustic shimmer
+  float caustic = pow(max(0.0, sin(p.x * 5.2 + uTime * 1.7) * cos(p.y * 5.6 - uTime * 1.4)), 2.0);
+  vec3 waterBody = mix(uDeepColor, uShallowColor, clamp(0.36 + 0.38 * fresnel + 0.12 * r1, 0.0, 1.0));
+  waterBody += uShallowColor * caustic * 0.16 * (1.0 - fresnel);
+
+  // Natural Fresnel reflection of the live sky horizon
+  vec3 base = mix(waterBody, uHorizonColor * 0.92, clamp(fresnel * 0.56, 0.0, 0.62));
 
   vec3 halfVec = normalize(normalize(uSunDir) + viewDir);
-  float specBroad = pow(max(dot(n, halfVec), 0.0), 42.0) * 0.18;
-  float specSharp = pow(max(dot(n, halfVec), 0.0), 160.0) * 0.58;
+  float specBroad = pow(max(dot(n, halfVec), 0.0), 46.0) * 0.18;
+  float specSharp = pow(max(dot(n, halfVec), 0.0), 185.0) * 0.62;
   vec3 col = base + uSunColor * (specBroad + specSharp);
 
-  float foam = smoothstep(1.42, 1.98, r1 + r2 + r3 * 0.5);
-  col = mix(col, vec3(0.86, 0.93, 0.96), foam * 0.18);
+  // Dynamic crest & shoreline seafoam lacing
+  float foam = smoothstep(1.36, 1.98, r1 + r2 + r3 * 0.55);
+  col = mix(col, vec3(0.88, 0.94, 0.97), foam * 0.22);
 
   gl_FragColor = vec4(col, 0.96);
 }
@@ -465,6 +521,7 @@ function buildStartingGantry(
   sPos: number,
   bannerTex: THREE.CanvasTexture,
   startGridTex: THREE.CanvasTexture,
+  concreteTex: { albedo: THREE.CanvasTexture; bump: THREE.CanvasTexture },
   accentHex: string,
 ): THREE.Group {
   const sample = sampleTrackAtDistance(track, sPos);
@@ -472,10 +529,17 @@ function buildStartingGantry(
   gantry.position.set(sample.pos.x, sample.pos.y, sample.pos.z);
   gantry.rotation.y = Math.atan2(sample.tangent.x, sample.tangent.z);
 
-  const span = track.course.roadWidth + 4.8;
-  const halfSpan = span * 0.5;
+  const halfSpan = track.course.roadWidth * 0.5 + track.course.shoulderWidth + 1.85;
+  const span = halfSpan * 2;
 
-  const concreteMat = new THREE.MeshStandardMaterial({ color: 0xbcb7ad, roughness: 0.88, metalness: 0.05 });
+  const concreteMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: concreteTex.albedo,
+    bumpMap: concreteTex.bump,
+    bumpScale: 0.18,
+    roughness: 0.88,
+    metalness: 0.05,
+  });
   const steelMat = new THREE.MeshStandardMaterial({ color: 0x262d38, roughness: 0.45, metalness: 0.78 });
   const galvMat = new THREE.MeshStandardMaterial({ color: 0x7e8794, roughness: 0.48, metalness: 0.72 });
   const accentMat = new THREE.MeshStandardMaterial({
@@ -636,7 +700,7 @@ function buildCheckpointArch(track: TrackData, sPos: number, accentHex: string):
   arch.position.set(sample.pos.x, sample.pos.y, sample.pos.z);
   arch.rotation.y = Math.atan2(sample.tangent.x, sample.tangent.z);
 
-  const halfSpan = track.course.roadWidth * 0.5 + 2.2;
+  const halfSpan = track.course.roadWidth * 0.5 + track.course.shoulderWidth + 1.45;
 
   const frameMat = new THREE.MeshStandardMaterial({
     color: 0x242c38,
@@ -679,6 +743,8 @@ function buildRaceControlStation(
   sPos: number,
   timingTex: THREE.CanvasTexture,
   pitHeaderTex: THREE.CanvasTexture,
+  concreteTex: { albedo: THREE.CanvasTexture; bump: THREE.CanvasTexture },
+  timberSoffitTex: THREE.CanvasTexture,
   accentHex: string,
 ): { group: THREE.Group; radarDish: THREE.Object3D } {
   const sample = sampleTrackAtDistance(track, sPos);
@@ -693,11 +759,23 @@ function buildRaceControlStation(
   station.position.set(px, gy, pz);
   station.rotation.y = Math.atan2(sample.tangent.x, sample.tangent.z);
 
-  const concreteMat = new THREE.MeshStandardMaterial({ color: 0xbcb7ad, roughness: 0.88, metalness: 0.05 });
+  const concreteMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: concreteTex.albedo,
+    bumpMap: concreteTex.bump,
+    bumpScale: 0.22,
+    roughness: 0.88,
+    metalness: 0.05,
+  });
   const darkConcreteMat = new THREE.MeshStandardMaterial({ color: 0x3b414c, roughness: 0.9, metalness: 0.06 });
   const darkSteelMat = new THREE.MeshStandardMaterial({ color: 0x1e2530, roughness: 0.42, metalness: 0.78 });
   const galvMat = new THREE.MeshStandardMaterial({ color: 0x8d96a4, roughness: 0.46, metalness: 0.72 });
-  const timberMat = new THREE.MeshStandardMaterial({ color: 0x70492e, roughness: 0.78, metalness: 0.06 });
+  const timberMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: timberSoffitTex,
+    roughness: 0.78,
+    metalness: 0.06,
+  });
   const toolboxRedMat = new THREE.MeshStandardMaterial({ color: 0xb91c1c, roughness: 0.42, metalness: 0.35 });
   const tireMat = new THREE.MeshStandardMaterial({ color: 0x16191f, roughness: 0.92, metalness: 0.04 });
 
@@ -793,6 +871,17 @@ function buildRaceControlStation(
         tire.position.set(-2.5, 0.98 + t * 0.28, bayCenterZ + 1.8);
         station.add(tire);
       }
+
+      // Overhead pit-lane pneumatic wheel-gun gantry boom arm extending out over pit apron
+      const boomMast = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 3.6, 8), darkSteelMat);
+      boomMast.position.set(2.5, 2.5, bayCenterZ + 2.4);
+      station.add(boomMast);
+      const boomArm = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.12, 0.12), galvMat);
+      boomArm.position.set(4.0, 4.25, bayCenterZ + 2.4);
+      station.add(boomArm);
+      const airHose = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.8, 6), accentMat);
+      airHose.position.set(5.1, 3.35, bayCenterZ + 2.4);
+      station.add(airHose);
     }
   }
 
@@ -971,6 +1060,377 @@ function buildRaceControlStation(
 }
 
 // ============================================================================
+// Architectural Tiered Spectator Grandstand + Mid-Lap Glass Pedestrian Bridge
+// ============================================================================
+
+function buildSpectatorGrandstand(
+  track: TrackData,
+  sPos: number,
+  concreteTex: { albedo: THREE.CanvasTexture; bump: THREE.CanvasTexture },
+  timberSoffitTex: THREE.CanvasTexture,
+  sponsorTex: THREE.CanvasTexture,
+  accentHex: string,
+): THREE.Group {
+  const sample = sampleTrackAtDistance(track, sPos);
+  const halfRoad = track.course.roadWidth * 0.5 + track.course.shoulderWidth;
+  const latOffset = -(halfRoad + 11.4);
+
+  const gx = sample.pos.x + sample.right.x * latOffset;
+  const gz = sample.pos.z + sample.right.z * latOffset;
+  const gy = Math.min(sample.pos.y, groundHeightAt(track, gx, gz));
+
+  const stand = new THREE.Group();
+  stand.position.set(gx, gy, gz);
+  stand.rotation.y = Math.atan2(sample.tangent.x, sample.tangent.z);
+
+  const concreteMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: concreteTex.albedo,
+    bumpMap: concreteTex.bump,
+    bumpScale: 0.2,
+    roughness: 0.88,
+    metalness: 0.05,
+  });
+  const steelMat = new THREE.MeshStandardMaterial({ color: 0x1e2531, roughness: 0.44, metalness: 0.78 });
+  const timberMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: timberSoffitTex,
+    roughness: 0.78,
+  });
+  const glassMat = new THREE.MeshPhysicalMaterial({
+    color: 0x1b334b,
+    roughness: 0.14,
+    metalness: 0.2,
+    clearcoat: 0.88,
+    transparent: true,
+    opacity: 0.46,
+  });
+  const accentMat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(accentHex),
+    emissive: new THREE.Color(accentHex),
+    emissiveIntensity: 0.28,
+    roughness: 0.34,
+  });
+  const sponsorMat = new THREE.MeshStandardMaterial({
+    map: sponsorTex,
+    roughness: 0.54,
+    metalness: 0.08,
+  });
+
+  // Deep grounded cast-concrete substructure
+  const base = new THREE.Mesh(new THREE.BoxGeometry(10.5, 6.0, 32.0), concreteMat);
+  base.position.set(0, -2.1, 0);
+  base.receiveShadow = true;
+  stand.add(base);
+
+  // 6 Ascending Concrete Seating Tiers facing the track (-X is track side from left-side placement; wait: right points +X in local frame?
+  // Note: sample.right is to the right of tangent; local +X is left when rotation.y = atan2(tx, tz) because +Z aligns with tangent, so +X is -right!
+  // Let's check Race Control: placed at +latOffset (+right), pitWall at +6.3 faced track. Wait: atan2(tx, tz) maps local +Z to tangent, local +X to (-tz, tx) which is LEFT of tangent (Wait: right = (-tz, tx) in our track.ts!).
+  // Let's verify: in track.ts, if tangent=(0,0,1), right=(-1,0,0) or (+1,0,0)? Let's build symmetrically with front facing -X (toward track for left placement)!
+  const tierCount = 6;
+  const seatPalette = [0x263244, 0x334155, 0x9a3412, 0xb45309, 0x1e3a5f];
+  const seatGeo = new THREE.BoxGeometry(0.46, 0.42, 0.46);
+  const seatMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.72 });
+  const totalSeats = tierCount * 36;
+  const seatMesh = new THREE.InstancedMesh(seatGeo, seatMat, totalSeats);
+  const dummy = new THREE.Object3D();
+  const sCol = new THREE.Color();
+  const rand = seededRand(9281);
+  let sIdx = 0;
+
+  for (let t = 0; t < tierCount; t++) {
+    // Steps ascend AWAY from the track (+X goes deeper away from road when placed on -right side? Wait: let's keep Race Control as reference:
+    // Race Control was placed at +sample.right * latOffset, and its track-facing wall was at local +X!
+    // Therefore local +X points TOWARD -sample.right (LEFT), meaning for Grandstand placed at -sample.right * latOffset, local -X points TOWARD the track!
+    const stepX = -4.2 + t * 1.48;
+    const stepY = 1.45 + t * 0.78;
+    const riser = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.82, 30.8), concreteMat);
+    riser.position.set(stepX, stepY, 0);
+    riser.castShadow = true;
+    riser.receiveShadow = true;
+    stand.add(riser);
+
+    for (let c = 0; c < 36 && sIdx < totalSeats; c++) {
+      const sz = -14.2 + c * 0.81;
+      dummy.position.set(stepX - 0.15, stepY + 0.62, sz);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.setScalar(1);
+      dummy.updateMatrix();
+      seatMesh.setMatrixAt(sIdx, dummy.matrix);
+      sCol.setHex(seatPalette[Math.floor(rand() * seatPalette.length)]);
+      seatMesh.setColorAt(sIdx, sCol);
+      sIdx++;
+    }
+  }
+  seatMesh.instanceMatrix.needsUpdate = true;
+  if (seatMesh.instanceColor) seatMesh.instanceColor.needsUpdate = true;
+  seatMesh.computeBoundingSphere();
+  stand.add(seatMesh);
+
+  // Rear concrete wind-baffle wall
+  const backWall = new THREE.Mesh(new THREE.BoxGeometry(0.7, 9.2, 31.4), concreteMat);
+  backWall.position.set(4.5, 5.2, 0);
+  backWall.castShadow = true;
+  stand.add(backWall);
+
+  // Track-facing glass safety balustrade + sponsor fascia banner
+  const frontGlass = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.15, 30.8), glassMat);
+  frontGlass.position.set(-5.05, 1.85, 0);
+  stand.add(frontGlass);
+
+  const fasciaBanner = new THREE.Mesh(new THREE.PlaneGeometry(24, 1.35), sponsorMat);
+  fasciaBanner.position.set(-5.26, 0.82, 0);
+  fasciaBanner.rotation.y = -Math.PI / 2;
+  stand.add(fasciaBanner);
+
+  // Structural rear steel columns & dramatic cantilevered architectural canopy roof with timber soffit
+  for (const cz of [-14.2, -4.8, 4.8, 14.2]) {
+    const col = new THREE.Mesh(new THREE.BoxGeometry(0.46, 10.6, 0.46), steelMat);
+    col.position.set(4.1, 6.2, cz);
+    stand.add(col);
+
+    const rafter = new THREE.Mesh(new THREE.BoxGeometry(11.6, 0.42, 0.28), steelMat);
+    rafter.position.set(-0.6, 10.7, cz);
+    rafter.rotation.z = -0.14;
+    stand.add(rafter);
+  }
+
+  const canopy = new THREE.Mesh(new THREE.BoxGeometry(12.2, 0.48, 32.8), steelMat);
+  canopy.position.set(-0.6, 11.1, 0);
+  canopy.rotation.z = -0.14;
+  canopy.castShadow = true;
+  stand.add(canopy);
+
+  const soffit = new THREE.Mesh(new THREE.BoxGeometry(11.4, 0.16, 32.0), timberMat);
+  soffit.position.set(-0.6, 10.8, 0);
+  soffit.rotation.z = -0.14;
+  stand.add(soffit);
+
+  const edgeAccent = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.16, 32.4), accentMat);
+  edgeAccent.position.set(-6.5, 11.9, 0);
+  stand.add(edgeAccent);
+
+  return stand;
+}
+
+function buildPedestrianFootbridge(
+  track: TrackData,
+  sPos: number,
+  concreteTex: { albedo: THREE.CanvasTexture; bump: THREE.CanvasTexture },
+  bannerTex: THREE.CanvasTexture,
+  accentHex: string,
+): THREE.Group {
+  const sample = sampleTrackAtDistance(track, sPos);
+  const bridge = new THREE.Group();
+  bridge.position.set(sample.pos.x, sample.pos.y, sample.pos.z);
+  bridge.rotation.y = Math.atan2(sample.tangent.x, sample.tangent.z);
+
+  const halfSpan = track.course.roadWidth * 0.5 + track.course.shoulderWidth + 3.4;
+  const fullSpan = halfSpan * 2;
+
+  const concreteMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: concreteTex.albedo,
+    bumpMap: concreteTex.bump,
+    bumpScale: 0.2,
+    roughness: 0.88,
+  });
+  const steelMat = new THREE.MeshStandardMaterial({ color: 0x202733, roughness: 0.42, metalness: 0.78 });
+  const glassMat = new THREE.MeshPhysicalMaterial({
+    color: 0x18324a,
+    roughness: 0.12,
+    metalness: 0.22,
+    clearcoat: 0.9,
+    transparent: true,
+    opacity: 0.52,
+  });
+  const interiorGlow = new THREE.MeshStandardMaterial({
+    color: 0xf4e3be,
+    emissive: 0xffd185,
+    emissiveIntensity: 0.36,
+    roughness: 0.4,
+  });
+  const accentMat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(accentHex),
+    emissive: new THREE.Color(accentHex),
+    emissiveIntensity: 0.32,
+    roughness: 0.3,
+  });
+  const bannerMat = new THREE.MeshStandardMaterial({
+    map: bannerTex,
+    roughness: 0.5,
+  });
+
+  // Twin board-formed concrete access towers flanking the road
+  const towerGeo = new THREE.BoxGeometry(3.6, 13.5, 4.4);
+  for (const side of [-1, 1]) {
+    const tower = new THREE.Mesh(towerGeo, concreteMat);
+    tower.position.set(side * (halfSpan + 1.2), 4.6, 0);
+    tower.castShadow = true;
+    bridge.add(tower);
+  }
+
+  // Elevated glazed pedestrian walkway deck
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(fullSpan + 2.2, 0.72, 3.6), steelMat);
+  deck.position.set(0, 7.6, 0);
+  deck.castShadow = true;
+  bridge.add(deck);
+
+  const ceiling = new THREE.Mesh(new THREE.BoxGeometry(fullSpan + 2.6, 0.58, 4.0), steelMat);
+  ceiling.position.set(0, 10.9, 0);
+  bridge.add(ceiling);
+
+  const ceilingLight = new THREE.Mesh(new THREE.BoxGeometry(fullSpan - 2.0, 0.12, 0.65), interiorGlow);
+  ceilingLight.position.set(0, 10.56, 0);
+  bridge.add(ceilingLight);
+
+  // Panoramic tinted glass enclosure + vertical steel window mullions
+  const glassTube = new THREE.Mesh(new THREE.BoxGeometry(fullSpan - 0.6, 2.75, 3.2), glassMat);
+  glassTube.position.set(0, 9.25, 0);
+  bridge.add(glassTube);
+
+  const mullionGeo = new THREE.BoxGeometry(0.14, 2.8, 0.14);
+  for (let mx = -halfSpan + 1.5; mx <= halfSpan - 1.5; mx += 3.0) {
+    for (const mz of [-1.62, 1.62]) {
+      const m = new THREE.Mesh(mullionGeo, steelMat);
+      m.position.set(mx, 9.25, mz);
+      bridge.add(m);
+    }
+  }
+
+  // Subtle circuit accent rail & approach signage
+  const trim = new THREE.Mesh(new THREE.BoxGeometry(fullSpan, 0.16, 3.75), accentMat);
+  trim.position.set(0, 7.22, 0);
+  bridge.add(trim);
+
+  const signGeo = new THREE.PlaneGeometry(11.5, 1.35);
+  const fSign = new THREE.Mesh(signGeo, bannerMat);
+  fSign.position.set(0, 11.4, -1.96);
+  fSign.rotation.y = Math.PI;
+  bridge.add(fSign);
+  const bSign = new THREE.Mesh(signGeo, bannerMat);
+  bSign.position.set(0, 11.4, 1.96);
+  bridge.add(bSign);
+
+  return bridge;
+}
+
+function buildFlutteringFlagsAndMarshals(
+  track: TrackData,
+  flagTextures: THREE.CanvasTexture[],
+  accentHex: string,
+): { group: THREE.Group; flagMeshes: Array<{ mesh: THREE.Mesh; phase: number }> } {
+  const group = new THREE.Group();
+  const flagMeshes: Array<{ mesh: THREE.Mesh; phase: number }> = [];
+  const halfRoad = track.course.roadWidth * 0.5 + track.course.shoulderWidth;
+
+  const poleMat = new THREE.MeshStandardMaterial({ color: 0x9aa4b2, roughness: 0.34, metalness: 0.82 });
+  const finialMat = new THREE.MeshStandardMaterial({ color: 0xc9a14d, roughness: 0.28, metalness: 0.88 });
+  const boothMat = new THREE.MeshStandardMaterial({ color: 0xd8d4ca, roughness: 0.82 });
+  const darkRoofMat = new THREE.MeshStandardMaterial({ color: 0x222935, roughness: 0.48, metalness: 0.65 });
+  const accentMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(accentHex), roughness: 0.4 });
+
+  const flagMats = flagTextures.map(
+    (tex) =>
+      new THREE.MeshStandardMaterial({
+        map: tex,
+        roughness: 0.72,
+        side: THREE.DoubleSide,
+      }),
+  );
+
+  const poleGeo = new THREE.CylinderGeometry(0.065, 0.11, 8.8, 8);
+  const finialGeo = new THREE.SphereGeometry(0.14, 8, 8);
+  const flagGeo = new THREE.PlaneGeometry(2.5, 1.25, 6, 1);
+  // Shift flag pivot cleanly to the mast edge
+  flagGeo.translate(1.25, 0, 0);
+
+  // Ceremonial flagpoles lining the Start/Finish straight & Pit plaza
+  const flagDistList = [18, 28, 46, 66, 82, 94];
+  let fIdx = 0;
+  for (const sDist of flagDistList) {
+    const s = sampleTrackAtDistance(track, sDist);
+    const yaw = Math.atan2(s.tangent.x, s.tangent.z);
+    for (const side of [-1, 1]) {
+      // Avoid crowding right inside the Pit building frontage
+      if (side === 1 && sDist >= 40 && sDist <= 78) continue;
+      const lat = side * (halfRoad + 3.2);
+      const fx = s.pos.x + s.right.x * lat;
+      const fz = s.pos.z + s.right.z * lat;
+      const fy = Math.min(s.pos.y, groundHeightAt(track, fx, fz));
+
+      const holder = new THREE.Group();
+      holder.position.set(fx, fy, fz);
+      holder.rotation.y = yaw + 0.55;
+
+      const pole = new THREE.Mesh(poleGeo, poleMat);
+      pole.position.y = 4.2;
+      holder.add(pole);
+
+      const finial = new THREE.Mesh(finialGeo, finialMat);
+      finial.position.y = 8.7;
+      holder.add(finial);
+
+      const banner = new THREE.Mesh(flagGeo, flagMats[fIdx % flagMats.length]);
+      banner.position.set(0.06, 7.85, 0);
+      holder.add(banner);
+      flagMeshes.push({ mesh: banner, phase: fIdx * 0.95 });
+
+      group.add(holder);
+      fIdx++;
+    }
+  }
+
+  // Corner Marshal Observation Posts at major technical corners
+  let marshalCooldown = 20;
+  let marshalCount = 0;
+  for (let i = 30; i < track.samples.length - 15 && marshalCount < 6; i += 4) {
+    if (marshalCooldown > 0) {
+      marshalCooldown--;
+      continue;
+    }
+    const s = track.samples[i];
+    if (Math.abs(s.curvature) < 0.011) continue;
+
+    const insideSign = s.curvature > 0 ? 1 : -1;
+    const lat = insideSign * (halfRoad + 4.4);
+    const mx = s.pos.x + s.right.x * lat;
+    const mz = s.pos.z + s.right.z * lat;
+    const my = Math.min(s.pos.y, groundHeightAt(track, mx, mz));
+
+    const post = new THREE.Group();
+    post.position.set(mx, my, mz);
+    post.rotation.y = Math.atan2(s.tangent.x, s.tangent.z);
+
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.6, 2.6), boothMat);
+    deck.position.y = 0.6;
+    post.add(deck);
+    const canopy = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.24, 3.0), darkRoofMat);
+    canopy.position.y = 3.1;
+    post.add(canopy);
+    for (const [cx, cz] of [
+      [-1.1, -1.1],
+      [1.1, -1.1],
+      [-1.1, 1.1],
+      [1.1, 1.1],
+    ]) {
+      const p = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.8, 0.12), darkRoofMat);
+      p.position.set(cx, 2.2, cz);
+      post.add(p);
+    }
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.68, 0.26, 2.68), accentMat);
+    stripe.position.y = 1.2;
+    post.add(stripe);
+
+    group.add(post);
+    marshalCount++;
+    marshalCooldown = 34;
+  }
+
+  return { group, flagMeshes };
+}
+
+// ============================================================================
 // Detailed Trackside Signage: Corner Chevrons, 150/100/50m Braking Boards,
 // Sponsor Hoardings, Tire-Barrier Stacks & Architectural Lamp Poles
 // ============================================================================
@@ -982,7 +1442,8 @@ function buildTracksideSignageAndSafety(
   sponsorTextures: THREE.CanvasTexture[],
 ): THREE.Group {
   const group = new THREE.Group();
-  const outerOffset = track.course.roadWidth * 0.5 + track.course.shoulderWidth + 1.15;
+  const shoulderEdge = track.course.roadWidth * 0.5 + track.course.shoulderWidth;
+  const outerOffset = shoulderEdge + 1.45;
 
   const galvMat = new THREE.MeshStandardMaterial({ color: 0x808996, roughness: 0.48, metalness: 0.74 });
   const darkBackMat = new THREE.MeshStandardMaterial({ color: 0x202632, roughness: 0.62, metalness: 0.48 });
@@ -1089,10 +1550,11 @@ function buildTracksideSignageAndSafety(
 
       group.add(sign);
 
-      // Add a red/white safety tire-barrier stack right in front of the guardrail
-      const tx = s.pos.x + s.right.x * outsideSign * (outerOffset - 0.65);
-      const tz = s.pos.z + s.right.z * outsideSign * (outerOffset - 0.65);
-      const ty = s.pos.y + Math.sin(s.bankAngle) * outsideSign * (outerOffset - 0.65);
+      // Add a red/white safety tire-barrier stack flush against the Armco steel guardrail
+      const tireLat = shoulderEdge - 0.42;
+      const tx = s.pos.x + s.right.x * outsideSign * tireLat;
+      const tz = s.pos.z + s.right.z * outsideSign * tireLat;
+      const ty = s.pos.y + Math.sin(s.bankAngle) * outsideSign * tireLat;
       tireStackPositions.push({ x: tx, y: ty, z: tz, yaw: heading, red: (i / 2) % 2 === 0 });
 
       chevronCooldown = 5;
@@ -1377,28 +1839,28 @@ function buildWorldLandmarks(
 
       for (const side of [-1, 1]) {
         const buttress = new THREE.Mesh(buttressGeo, rockMat);
-        buttress.position.set(side * 20.5, 4.5, 0);
+        buttress.position.set(side * 24.0, 4.5, 0);
         naturalArch.add(buttress);
 
         const pillar = new THREE.Mesh(pillarGeo, rockMat);
-        pillar.position.set(side * 18.5, 13.5, 0);
+        pillar.position.set(side * 21.8, 13.5, 0);
         pillar.rotation.z = side * 0.12;
         naturalArch.add(pillar);
 
         const band = new THREE.Mesh(new THREE.CylinderGeometry(4.4, 4.9, 3.2, 9), strataMat);
-        band.position.set(side * 19.2, 16.5, 0);
+        band.position.set(side * 22.4, 16.5, 0);
         naturalArch.add(band);
       }
 
-      const bridgeSpan = new THREE.Mesh(new THREE.BoxGeometry(40, 5.2, 8.0), capMat);
+      const bridgeSpan = new THREE.Mesh(new THREE.BoxGeometry(46, 5.2, 8.0), capMat);
       bridgeSpan.position.set(0, 25.2, 0);
       naturalArch.add(bridgeSpan);
 
-      const midStrata = new THREE.Mesh(new THREE.BoxGeometry(36, 2.2, 7.4), strataMat);
+      const midStrata = new THREE.Mesh(new THREE.BoxGeometry(42, 2.2, 7.4), strataMat);
       midStrata.position.set(0, 28.4, 0);
       naturalArch.add(midStrata);
 
-      const crown = new THREE.Mesh(new THREE.BoxGeometry(28, 3.4, 6.4), rockMat);
+      const crown = new THREE.Mesh(new THREE.BoxGeometry(34, 3.4, 6.4), rockMat);
       crown.position.set(0, 30.8, 0);
       naturalArch.add(crown);
       group.add(naturalArch);
@@ -1420,33 +1882,39 @@ function buildWorldLandmarks(
       return g;
     };
 
-    const mesaCoords: Array<[number, number, number, number]> = [
-      [112, 86, 32, 52],
-      [-128, 135, 36, 62],
-      [270, 230, 44, 72],
-      [420, -40, 40, 64],
-      [185, -360, 38, 58],
-      [-105, -165, 30, 46],
-    ];
-    mesaCoords.forEach(([mx, mz, rad, h], idx) => {
-      const gy = groundHeightAt(track, mx, mz);
+    const mesaSpecs = COURSE_LANDMARKS[track.course.id].mesas ?? [];
+    mesaSpecs.forEach((m, idx) => {
+      if (computeLandmarkTrackClearance(track, m.x, m.z, m.radius * 1.45) < 4) return;
+      const gy = groundHeightAt(track, m.x, m.z);
       const mesa = new THREE.Group();
-      mesa.position.set(mx, gy - 4, mz);
+      mesa.position.set(m.x, gy - 4, m.z);
 
-      const talus = new THREE.Mesh(cragCylinder(rad * 0.85, rad * 1.32, h * 0.45 + 22, idx * 3 + 1), rockMat);
-      talus.position.y = h * 0.22 - 10;
+      const talus = new THREE.Mesh(
+        cragCylinder(m.radius * 0.85, m.radius * 1.32, m.height * 0.45 + 22, idx * 3 + 1),
+        rockMat,
+      );
+      talus.position.y = m.height * 0.22 - 10;
       mesa.add(talus);
 
-      const cliff = new THREE.Mesh(cragCylinder(rad * 0.68, rad * 0.82, h * 0.34, idx * 3 + 2), capMat);
-      cliff.position.y = h * 0.54;
+      const cliff = new THREE.Mesh(
+        cragCylinder(m.radius * 0.68, m.radius * 0.82, m.height * 0.34, idx * 3 + 2),
+        capMat,
+      );
+      cliff.position.y = m.height * 0.54;
       mesa.add(cliff);
 
-      const band = new THREE.Mesh(cragCylinder(rad * 0.63, rad * 0.69, h * 0.14, idx * 3 + 3), strataMat);
-      band.position.y = h * 0.76;
+      const band = new THREE.Mesh(
+        cragCylinder(m.radius * 0.63, m.radius * 0.69, m.height * 0.14, idx * 3 + 3),
+        strataMat,
+      );
+      band.position.y = m.height * 0.76;
       mesa.add(band);
 
-      const cap = new THREE.Mesh(cragCylinder(rad * 0.54, rad * 0.62, h * 0.18, idx * 3 + 4), rockMat);
-      cap.position.y = h * 0.90;
+      const cap = new THREE.Mesh(
+        cragCylinder(m.radius * 0.54, m.radius * 0.62, m.height * 0.18, idx * 3 + 4),
+        rockMat,
+      );
+      cap.position.y = m.height * 0.90;
       mesa.add(cap);
       group.add(mesa);
     });
@@ -1476,67 +1944,62 @@ function buildWorldLandmarks(
     });
 
     // Detailed Mediterranean Headland Lighthouse with iron gallery rail & keeper's cottage
-    const lhX = -76;
-    const lhZ = 210;
-    const lhY = Math.max(-2, groundHeightAt(track, lhX, lhZ));
-    const lighthouse = new THREE.Group();
-    lighthouse.position.set(lhX, lhY - 4, lhZ);
+    const lhSpec = COURSE_LANDMARKS[track.course.id].lighthouse;
+    if (lhSpec && computeLandmarkTrackClearance(track, lhSpec.x, lhSpec.z, lhSpec.radius) >= 4) {
+      const lhY = Math.max(-2, groundHeightAt(track, lhSpec.x, lhSpec.z));
+      const lighthouse = new THREE.Group();
+      lighthouse.position.set(lhSpec.x, lhY - 4, lhSpec.z);
 
-    const lhBase = new THREE.Mesh(new THREE.CylinderGeometry(5.8, 7.0, 8, 12), stoneMat);
-    lhBase.position.y = 2;
-    lighthouse.add(lhBase);
+      const lhBase = new THREE.Mesh(new THREE.CylinderGeometry(5.8, 7.0, 8, 12), stoneMat);
+      lhBase.position.y = 2;
+      lighthouse.add(lhBase);
 
-    const tower = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 4.8, 42, 16), limeMat);
-    tower.position.y = 22;
-    lighthouse.add(tower);
+      const tower = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 4.8, 42, 16), limeMat);
+      tower.position.y = 22;
+      lighthouse.add(tower);
 
-    // Painted crimson maritime daymark band
-    const stripe = new THREE.Mesh(new THREE.CylinderGeometry(3.25, 3.65, 7.2, 16), terraMat);
-    stripe.position.y = 28;
-    lighthouse.add(stripe);
+      // Painted crimson maritime daymark band
+      const stripe = new THREE.Mesh(new THREE.CylinderGeometry(3.25, 3.65, 7.2, 16), terraMat);
+      stripe.position.y = 28;
+      lighthouse.add(stripe);
 
-    const gallery = new THREE.Mesh(new THREE.CylinderGeometry(3.9, 3.3, 1.5, 16), stoneMat);
-    gallery.position.y = 43.2;
-    lighthouse.add(gallery);
+      const gallery = new THREE.Mesh(new THREE.CylinderGeometry(3.9, 3.3, 1.5, 16), stoneMat);
+      gallery.position.y = 43.2;
+      lighthouse.add(gallery);
 
-    const railRing = new THREE.Mesh(new THREE.TorusGeometry(3.75, 0.1, 6, 16), ironMat);
-    railRing.rotation.x = Math.PI / 2;
-    railRing.position.y = 44.8;
-    lighthouse.add(railRing);
+      const railRing = new THREE.Mesh(new THREE.TorusGeometry(3.75, 0.1, 6, 16), ironMat);
+      railRing.rotation.x = Math.PI / 2;
+      railRing.position.y = 44.8;
+      lighthouse.add(railRing);
 
-    const lantern = new THREE.Mesh(new THREE.CylinderGeometry(2.1, 2.1, 4.2, 12), lanternMat);
-    lantern.position.y = 46;
-    lighthouse.add(lantern);
+      const lantern = new THREE.Mesh(new THREE.CylinderGeometry(2.1, 2.1, 4.2, 12), lanternMat);
+      lantern.position.y = 46;
+      lighthouse.add(lantern);
 
-    const roof = new THREE.Mesh(new THREE.ConeGeometry(2.9, 4.0, 14), terraMat);
-    roof.position.y = 49.8;
-    lighthouse.add(roof);
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(2.9, 4.0, 14), terraMat);
+      roof.position.y = 49.8;
+      lighthouse.add(roof);
 
-    // Attached stone keeper's cottage
-    const cottage = new THREE.Mesh(new THREE.BoxGeometry(9.5, 6.2, 7.4), limeMat);
-    cottage.position.set(7.5, 4.5, 0);
-    lighthouse.add(cottage);
-    const cottageRoof = new THREE.Mesh(new THREE.ConeGeometry(7.0, 2.8, 4), terraMat);
-    cottageRoof.position.set(7.5, 9.0, 0);
-    cottageRoof.rotation.y = Math.PI / 4;
-    lighthouse.add(cottageRoof);
-    group.add(lighthouse);
+      // Attached stone keeper's cottage
+      const cottage = new THREE.Mesh(new THREE.BoxGeometry(9.5, 6.2, 7.4), limeMat);
+      cottage.position.set(7.5, 4.5, 0);
+      lighthouse.add(cottage);
+      const cottageRoof = new THREE.Mesh(new THREE.ConeGeometry(7.0, 2.8, 4), terraMat);
+      cottageRoof.position.set(7.5, 9.0, 0);
+      cottageRoof.rotation.y = Math.PI / 4;
+      lighthouse.add(cottageRoof);
+      group.add(lighthouse);
+    }
 
     // Multi-part Mediterranean hillside villas with stone retaining walls, shutters & chimneys
-    const villaSpots: Array<[number, number, number]> = [
-      [56, -120, 0.2],
-      [68, 35, -0.4],
-      [78, 170, 0.5],
-      [-55, -245, 1.1],
-      [-210, -280, -0.6],
-      [-235, 225, 0.9],
-    ];
-    for (const [vx, vz, rotY] of villaSpots) {
-      const vy = groundHeightAt(track, vx, vz);
+    const villaSpecs = COURSE_LANDMARKS[track.course.id].villas ?? [];
+    for (const v of villaSpecs) {
+      if (computeLandmarkTrackClearance(track, v.x, v.z, v.radius) < 4) continue;
+      const vy = groundHeightAt(track, v.x, v.z);
       if (track.course.waterLevel !== null && vy < track.course.waterLevel + 3) continue;
       const villa = new THREE.Group();
-      villa.position.set(vx, vy - 2.8, vz);
-      villa.rotation.y = rotY;
+      villa.position.set(v.x, vy - 2.8, v.z);
+      villa.rotation.y = v.rotY;
 
       const terrace = new THREE.Mesh(new THREE.BoxGeometry(14.5, 4.5, 12), stoneMat);
       terrace.position.y = 1.2;
@@ -1652,7 +2115,7 @@ function buildWorldLandmarks(
 
     // Ornate curved-eave Vermilion Torii Portals with stone footings, gakuzuka plaque & carved Toro lanterns
     const toriiFractions = [0.09, 0.34, 0.63, 0.88];
-    const halfSpan = track.course.roadWidth * 0.5 + 3.5;
+    const halfSpan = track.course.roadWidth * 0.5 + track.course.shoulderWidth + 1.85;
 
     for (const frac of toriiFractions) {
       const sample = sampleTrackAtDistance(track, track.totalLength * frac);
@@ -1720,60 +2183,73 @@ function buildWorldLandmarks(
     }
 
     // Ornate 3-Tier Mountain Pagoda with stone terrace, timber veranda railings & gold sorin finial
-    const pagX = 68;
-    const pagZ = 148;
-    const pagY = groundHeightAt(track, pagX, pagZ);
-    const pagoda = new THREE.Group();
-    pagoda.position.set(pagX, pagY - 3, pagZ);
+    const pagSpec = COURSE_LANDMARKS[track.course.id].pagoda;
+    if (pagSpec && computeLandmarkTrackClearance(track, pagSpec.x, pagSpec.z, pagSpec.radius) >= 4) {
+      const pagY = groundHeightAt(track, pagSpec.x, pagSpec.z);
+      const pagoda = new THREE.Group();
+      pagoda.position.set(pagSpec.x, pagY - 3, pagSpec.z);
 
-    const pBase = new THREE.Mesh(new THREE.BoxGeometry(14.5, 8.5, 14.5), stoneMat);
-    pBase.position.y = 1.0;
-    pagoda.add(pBase);
+      const pBase = new THREE.Mesh(new THREE.BoxGeometry(14.5, 8.5, 14.5), stoneMat);
+      pBase.position.y = 1.0;
+      pagoda.add(pBase);
 
-    for (let tier = 0; tier < 3; tier++) {
-      const scale = 1 - tier * 0.2;
-      const ty = 7.4 + tier * 6.2;
-      const story = new THREE.Mesh(
-        new THREE.BoxGeometry(9.2 * scale, 4.4, 9.2 * scale),
-        tier % 2 === 0 ? vermilionMat : plasterMat,
-      );
-      story.position.y = ty;
-      pagoda.add(story);
+      for (let tier = 0; tier < 3; tier++) {
+        const scale = 1 - tier * 0.2;
+        const ty = 7.4 + tier * 6.2;
+        const story = new THREE.Mesh(
+          new THREE.BoxGeometry(9.2 * scale, 4.4, 9.2 * scale),
+          tier % 2 === 0 ? vermilionMat : plasterMat,
+        );
+        story.position.y = ty;
+        pagoda.add(story);
 
-      const veranda = new THREE.Mesh(new THREE.BoxGeometry(10.8 * scale, 0.45, 10.8 * scale), darkCapMat);
-      veranda.position.y = ty - 2.0;
-      pagoda.add(veranda);
+        const veranda = new THREE.Mesh(new THREE.BoxGeometry(10.8 * scale, 0.45, 10.8 * scale), darkCapMat);
+        veranda.position.y = ty - 2.0;
+        pagoda.add(veranda);
 
-      const eave = new THREE.Mesh(new THREE.ConeGeometry(9.8 * scale, 2.7, 4), darkCapMat);
-      eave.position.y = ty + 3.2;
-      eave.rotation.y = Math.PI / 4;
-      pagoda.add(eave);
+        const eave = new THREE.Mesh(new THREE.ConeGeometry(9.8 * scale, 2.7, 4), darkCapMat);
+        eave.position.y = ty + 3.2;
+        eave.rotation.y = Math.PI / 4;
+        pagoda.add(eave);
+      }
+      const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.34, 6.8, 10), goldMat);
+      spire.position.y = 26.8;
+      pagoda.add(spire);
+      group.add(pagoda);
     }
-    const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.34, 6.8, 10), goldMat);
-    spire.position.y = 26.8;
-    pagoda.add(spire);
-    group.add(pagoda);
 
-    // Sculpted volcanic Mount Solstice peak on the horizon with ridge spurs
-    const mountain = new THREE.Group();
-    mountain.position.set(175, -12, 470);
-    const slopeMat = new THREE.MeshStandardMaterial({
-      color: 0x364258,
-      bumpMap: terrainBump,
-      bumpScale: 0.6,
-      roughness: 0.92,
-    });
-    const snowMat = new THREE.MeshStandardMaterial({ color: 0xdce4ee, roughness: 0.78 });
-    const mBase = new THREE.Mesh(new THREE.ConeGeometry(225, 168, 20), slopeMat);
-    mBase.position.y = 82;
-    mountain.add(mBase);
-    const mSpur = new THREE.Mesh(new THREE.ConeGeometry(130, 110, 14), slopeMat);
-    mSpur.position.set(-105, 50, -35);
-    mountain.add(mSpur);
-    const mSnow = new THREE.Mesh(new THREE.ConeGeometry(86, 66, 20), snowMat);
-    mSnow.position.y = 135;
-    mountain.add(mSnow);
-    group.add(mountain);
+    // Sculpted volcanic Mount Solstice peak on the northern horizon (well clear of the circuit!)
+    const mtSpec = COURSE_LANDMARKS[track.course.id].mountain;
+    if (mtSpec && computeLandmarkTrackClearance(track, mtSpec.x, mtSpec.z, mtSpec.baseRadius) >= 8) {
+      const mountain = new THREE.Group();
+      mountain.position.set(mtSpec.x, -14, mtSpec.z);
+      const slopeMat = new THREE.MeshStandardMaterial({
+        color: 0x364258,
+        bumpMap: terrainBump,
+        bumpScale: 0.6,
+        roughness: 0.92,
+      });
+      const snowMat = new THREE.MeshStandardMaterial({ color: 0xdce4ee, roughness: 0.78 });
+      const mBase = new THREE.Mesh(
+        new THREE.ConeGeometry(mtSpec.baseRadius, mtSpec.baseHeight, 22),
+        slopeMat,
+      );
+      mBase.position.y = mtSpec.baseHeight * 0.49;
+      mountain.add(mBase);
+      const mSpur = new THREE.Mesh(
+        new THREE.ConeGeometry(mtSpec.spurRadius, mtSpec.spurHeight, 16),
+        slopeMat,
+      );
+      mSpur.position.set(mtSpec.spurOffsetX, mtSpec.spurHeight * 0.45, mtSpec.spurOffsetZ);
+      mountain.add(mSpur);
+      const mSnow = new THREE.Mesh(
+        new THREE.ConeGeometry(mtSpec.snowRadius, mtSpec.snowHeight, 22),
+        snowMat,
+      );
+      mSnow.position.y = mtSpec.baseHeight * 0.8;
+      mountain.add(mSnow);
+      group.add(mountain);
+    }
   } else {
     // Glacier Observatory: Paneled brushed-aluminum astronomical domes + telemetry dishes + crystalline ice crags
     const domeWhite = new THREE.MeshStandardMaterial({ color: 0xc5d0dc, roughness: 0.38, metalness: 0.52 });
@@ -1793,16 +2269,13 @@ function buildWorldLandmarks(
       envMapIntensity: 0.75,
     });
 
-    const domeLocations: Array<[number, number, number]> = [
-      [56, 200, 18],
-      [230, 82, 16],
-      [-55, 92, 13],
-      [215, -170, 15],
-    ];
-    for (const [dx, dz, radius] of domeLocations) {
-      const gy = groundHeightAt(track, dx, dz);
+    const domeSpecs = COURSE_LANDMARKS[track.course.id].domes ?? [];
+    for (const d of domeSpecs) {
+      if (computeLandmarkTrackClearance(track, d.x, d.z, d.radius * 1.25) < 4) continue;
+      const radius = d.radius;
+      const gy = groundHeightAt(track, d.x, d.z);
       const obs = new THREE.Group();
-      obs.position.set(dx, gy - 2, dz);
+      obs.position.set(d.x, gy - 2, d.z);
 
       const drum = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius * 1.15, radius * 0.9 + 14, 20), domeWhite);
       drum.position.y = radius * 0.45 - 7;
@@ -1836,25 +2309,19 @@ function buildWorldLandmarks(
       group.add(obs);
     }
 
-    const spireSpots: Array<[number, number, number, number]> = [
-      [-64, -95, 11, 36],
-      [88, 72, 13, 44],
-      [155, 250, 15, 50],
-      [340, 110, 16, 54],
-      [110, -280, 13, 40],
-      [-85, 220, 12, 38],
-    ];
-    for (const [sx, sz, rad, h] of spireSpots) {
-      const gy = groundHeightAt(track, sx, sz);
+    const spireSpecs = COURSE_LANDMARKS[track.course.id].spires ?? [];
+    for (const sp of spireSpecs) {
+      if (computeLandmarkTrackClearance(track, sp.x, sp.z, sp.radius * 1.5) < 4) continue;
+      const gy = groundHeightAt(track, sp.x, sp.z);
       const cluster = new THREE.Group();
-      cluster.position.set(sx, gy - 4, sz);
-      const main = new THREE.Mesh(new THREE.ConeGeometry(rad, h, 6), iceSpireMat);
-      main.position.y = h * 0.42;
-      main.rotation.set(0.08, sx * 0.1, -0.06);
+      cluster.position.set(sp.x, gy - 4, sp.z);
+      const main = new THREE.Mesh(new THREE.ConeGeometry(sp.radius, sp.height, 6), iceSpireMat);
+      main.position.y = sp.height * 0.42;
+      main.rotation.set(0.08, sp.x * 0.1, -0.06);
       cluster.add(main);
-      const sub = new THREE.Mesh(new THREE.ConeGeometry(rad * 0.62, h * 0.68, 5), iceSpireMat);
-      sub.position.set(rad * 0.65, h * 0.26, rad * 0.3);
-      sub.rotation.set(-0.1, sx * 0.2, 0.14);
+      const sub = new THREE.Mesh(new THREE.ConeGeometry(sp.radius * 0.62, sp.height * 0.68, 5), iceSpireMat);
+      sub.position.set(sp.radius * 0.65, sp.height * 0.26, sp.radius * 0.3);
+      sub.rotation.set(-0.1, sp.x * 0.2, 0.14);
       cluster.add(sub);
       group.add(cluster);
     }
@@ -2001,6 +2468,64 @@ function createParticlePool(capacity = 220): ParticlePool {
   return { mesh, emit, update, dispose };
 }
 
+function createSkidmarkPool(capacity = 360): SkidmarkPool {
+  const geo = new THREE.PlaneGeometry(1, 1);
+  geo.rotateX(-Math.PI / 2);
+
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0x0b0d12,
+    transparent: true,
+    opacity: 0.44,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -3,
+    polygonOffsetUnits: -3,
+  });
+
+  const mesh = new THREE.InstancedMesh(geo, mat, capacity);
+  mesh.frustumCulled = false;
+
+  const dummy = new THREE.Object3D();
+  const clear = () => {
+    for (let i = 0; i < capacity; i++) {
+      dummy.position.set(0, -999, 0);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.setScalar(0.001);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+  };
+  clear();
+
+  let cursor = 0;
+  const stamp = (
+    x: number,
+    y: number,
+    z: number,
+    heading: number,
+    bankAngle: number,
+    length: number,
+    width: number,
+  ) => {
+    dummy.position.set(x, y + 0.045, z);
+    dummy.rotation.order = 'YXZ';
+    dummy.rotation.set(0, heading, -bankAngle);
+    dummy.scale.set(width, 1, length);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(cursor, dummy.matrix);
+    cursor = (cursor + 1) % capacity;
+    mesh.instanceMatrix.needsUpdate = true;
+  };
+
+  const dispose = () => {
+    geo.dispose();
+    mat.dispose();
+  };
+
+  return { mesh, stamp, clear, dispose };
+}
+
 export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number): CourseEnvironment {
   const group = new THREE.Group();
   const ownedTextures: THREE.Texture[] = [];
@@ -2014,6 +2539,8 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
   );
   const terrainTex = createTerrainDetailTextures(maxAnisotropy);
   const foliageTex = createFoliageTextures(maxAnisotropy);
+  const concreteTex = createConcreteFormworkTexture(maxAnisotropy);
+  const timberSoffitTex = createTimberSoffitTexture(maxAnisotropy);
   const chevronTex = createChevronSignTexture(course.accentHex, maxAnisotropy);
   const timingTex = createTimingTowerTexture(course.name, course.accentHex, maxAnisotropy);
   const pitHeaderTex = createPitBayHeaderTexture(course.accentHex, maxAnisotropy);
@@ -2025,6 +2552,10 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
   const sponsorTextures = [0, 1, 2, 3].map((v) =>
     createSponsorBoardTexture(v, course.accentHex, maxAnisotropy),
   );
+  const flagTextures = [0, 1, 2].map((v) =>
+    createPennantFlagTexture(course.accentHex, v, maxAnisotropy),
+  );
+  const delineatorTex = createDelineatorPostTexture(maxAnisotropy);
 
   ownedTextures.push(
     roadTex.albedo,
@@ -2038,11 +2569,16 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
     foliageTex.barkAlbedo,
     foliageTex.barkBump,
     foliageTex.leafAlbedo,
+    concreteTex.albedo,
+    concreteTex.bump,
+    timberSoffitTex,
     chevronTex,
     timingTex,
     pitHeaderTex,
     ...brakingTextures,
     ...sponsorTextures,
+    ...flagTextures,
+    delineatorTex,
   );
 
   // 1. Procedural Atmospheric Sky Dome
@@ -2082,6 +2618,7 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
     uTime: { value: number };
     uShallowColor: { value: THREE.Color };
     uDeepColor: { value: THREE.Color };
+    uHorizonColor: { value: THREE.Color };
     uSunColor: { value: THREE.Color };
     uSunDir: { value: THREE.Vector3 };
   } | null = null;
@@ -2091,6 +2628,7 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
       uTime: { value: 0 },
       uShallowColor: { value: new THREE.Color(course.waterColor) },
       uDeepColor: { value: new THREE.Color(course.waterDeepColor) },
+      uHorizonColor: { value: new THREE.Color(course.skyHorizon) },
       uSunColor: { value: new THREE.Color(course.sunColor) },
       uSunDir: { value: skyUniforms.uSunDir.value.clone() },
     };
@@ -2197,13 +2735,45 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
   stanchions.computeBoundingSphere();
   group.add(stanchions);
 
-  // 4. Trussed Start/Finish Gantry + Pit & Race Control Station + Trackside Signage/Safety + Checkpoint Arches
+  // 4. Trussed Start/Finish Gantry + Pit & Race Control Station + Tiered Grandstand + Pedestrian Bridge + Flags
   const bannerTex = createStartBannerTexture(course.name, course.accentHex, maxAnisotropy);
   ownedTextures.push(bannerTex);
-  group.add(buildStartingGantry(track, 36, bannerTex, roadTex.startGrid, course.accentHex));
+  group.add(buildStartingGantry(track, 36, bannerTex, roadTex.startGrid, concreteTex, course.accentHex));
 
-  const stationBuild = buildRaceControlStation(track, 58, timingTex, pitHeaderTex, course.accentHex);
+  const stationBuild = buildRaceControlStation(
+    track,
+    58,
+    timingTex,
+    pitHeaderTex,
+    concreteTex,
+    timberSoffitTex,
+    course.accentHex,
+  );
   group.add(stationBuild.group);
+
+  group.add(
+    buildSpectatorGrandstand(
+      track,
+      54,
+      concreteTex,
+      timberSoffitTex,
+      sponsorTextures[0],
+      course.accentHex,
+    ),
+  );
+
+  group.add(
+    buildPedestrianFootbridge(
+      track,
+      track.totalLength * 0.42,
+      concreteTex,
+      bannerTex,
+      course.accentHex,
+    ),
+  );
+
+  const flagsBuild = buildFlutteringFlagsAndMarshals(track, flagTextures, course.accentHex);
+  group.add(flagsBuild.group);
 
   group.add(buildTracksideSignageAndSafety(track, chevronTex, brakingTextures, sponsorTextures));
 
@@ -2218,7 +2788,7 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
   // 6. Signature World Landmarks
   group.add(buildWorldLandmarks(track, terrainTex.bump));
 
-  // 7. Hyper-Detailed 5-Part Botanical Trees + Roadside Shrubs + Craggy Boulders
+  // 7. Hyper-Detailed 6-Part Botanical Trees (Dual Branches + 4 Layered Foliage Boughs) + Shrubs + Boulders
   const rand = seededRand(course.id.length * 733 + 31);
   const treePositions: Array<{ x: number; y: number; z: number; scale: number; rotY: number; leanX: number; leanZ: number }> = [];
   const bushPositions: Array<{ x: number; y: number; z: number; scale: number; rotY: number }> = [];
@@ -2227,8 +2797,8 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
   for (let i = 0; i < track.samples.length; i += 3) {
     const s = track.samples[i];
     for (const side of [-1, 1]) {
-      // Keep the Pit & Race Control station footprint clear of trees
-      if (s.s > 28 && s.s < 88 && side === 1) continue;
+      // Keep the Pit & Race Control station (right) and Spectator Grandstand (left) footprints clear of trees
+      if (s.s > 28 && s.s < 88) continue;
 
       const dist = shoulderOuter + 7 + rand() * 44;
       const x = s.pos.x + s.right.x * side * dist;
@@ -2295,43 +2865,58 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
     branchGeo.rotateZ(0.62);
     branchGeo.translate(0.1, trunkH * 0.62, 0);
 
-    // 3 staggered botanical foliage clusters per tree
+    const branch2Geo = new THREE.CylinderGeometry(0.07, 0.14, 1.9, 6);
+    branch2Geo.translate(0, 0.9, 0);
+    branch2Geo.rotateZ(-0.56);
+    branch2Geo.rotateY(1.2);
+    branch2Geo.translate(-0.12, trunkH * 0.54, 0.08);
+
+    // 4 staggered asymmetrical botanical foliage boughs per tree
     let crown1Geo: THREE.BufferGeometry;
     let crown2Geo: THREE.BufferGeometry;
     let crown3Geo: THREE.BufferGeometry;
+    let crown4Geo: THREE.BufferGeometry;
 
     if (isPine) {
-      // Multi-tiered jagged evergreen alpine spruce boughs (3 overlapping irregular tiers)
-      crown1Geo = new THREE.ConeGeometry(2.7, 3.6, 9);
-      crown1Geo.translate(0, 3.8, 0);
-      crown2Geo = new THREE.ConeGeometry(2.15, 3.3, 9);
-      crown2Geo.translate(0.15, 5.7, -0.1);
-      crown3Geo = new THREE.ConeGeometry(1.45, 2.8, 9);
-      crown3Geo.translate(-0.1, 7.4, 0.1);
+      // Multi-tiered jagged evergreen alpine spruce boughs (4 overlapping irregular tiers)
+      crown1Geo = new THREE.ConeGeometry(2.85, 3.6, 9);
+      crown1Geo.translate(0, 3.6, 0);
+      crown2Geo = new THREE.ConeGeometry(2.3, 3.3, 9);
+      crown2Geo.translate(0.15, 5.4, -0.1);
+      crown3Geo = new THREE.ConeGeometry(1.65, 2.9, 9);
+      crown3Geo.translate(-0.12, 7.0, 0.1);
+      crown4Geo = new THREE.ConeGeometry(1.05, 2.3, 9);
+      crown4Geo.translate(0.06, 8.4, -0.05);
     } else if (isCypress) {
       // Sculpted tall Mediterranean Tuscan cypress clusters
-      crown1Geo = createOrganicFoliageGeometry(1.45, 2.1, 101);
-      crown1Geo.translate(0, 4.4, 0);
-      crown2Geo = createOrganicFoliageGeometry(1.15, 1.9, 202);
-      crown2Geo.translate(0.2, 6.8, -0.15);
-      crown3Geo = createOrganicFoliageGeometry(0.72, 1.7, 303);
-      crown3Geo.translate(-0.12, 8.8, 0.1);
+      crown1Geo = createOrganicFoliageGeometry(1.48, 2.1, 101);
+      crown1Geo.translate(0, 4.3, 0);
+      crown2Geo = createOrganicFoliageGeometry(1.18, 1.9, 202);
+      crown2Geo.translate(0.2, 6.6, -0.15);
+      crown3Geo = createOrganicFoliageGeometry(0.84, 1.7, 303);
+      crown3Geo.translate(-0.14, 8.4, 0.12);
+      crown4Geo = createOrganicFoliageGeometry(0.52, 1.5, 355);
+      crown4Geo.translate(0.08, 9.8, -0.04);
     } else if (isSakura) {
       // Wide spreading Japanese cherry blossom bough clouds
       crown1Geo = createOrganicFoliageGeometry(2.55, 0.68, 404);
-      crown1Geo.translate(-0.85, 4.3, 0.45);
+      crown1Geo.translate(-0.95, 4.2, 0.5);
       crown2Geo = createOrganicFoliageGeometry(2.25, 0.65, 505);
-      crown2Geo.translate(1.25, 4.8, -0.55);
-      crown3Geo = createOrganicFoliageGeometry(1.85, 0.62, 606);
-      crown3Geo.translate(0.1, 5.75, 0.15);
+      crown2Geo.translate(1.3, 4.7, -0.55);
+      crown3Geo = createOrganicFoliageGeometry(1.9, 0.62, 606);
+      crown3Geo.translate(0.15, 5.75, 0.15);
+      crown4Geo = createOrganicFoliageGeometry(1.6, 0.58, 656);
+      crown4Geo.translate(-0.45, 5.0, -1.15);
     } else {
       // Gnarled high-desert canyon juniper / cedar multi-cluster crown
-      crown1Geo = createOrganicFoliageGeometry(2.1, 0.72, 707);
-      crown1Geo.translate(-0.7, 3.6, 0.3);
-      crown2Geo = createOrganicFoliageGeometry(1.75, 0.68, 808);
-      crown2Geo.translate(1.05, 4.15, -0.45);
-      crown3Geo = createOrganicFoliageGeometry(1.45, 0.65, 909);
+      crown1Geo = createOrganicFoliageGeometry(2.15, 0.72, 707);
+      crown1Geo.translate(-0.78, 3.55, 0.35);
+      crown2Geo = createOrganicFoliageGeometry(1.8, 0.68, 808);
+      crown2Geo.translate(1.1, 4.1, -0.45);
+      crown3Geo = createOrganicFoliageGeometry(1.5, 0.65, 909);
       crown3Geo.translate(0.15, 4.95, 0.25);
+      crown4Geo = createOrganicFoliageGeometry(1.35, 0.64, 969);
+      crown4Geo.translate(-0.4, 4.35, -0.95);
     }
 
     const baseFoliageHex = isSakura
@@ -2351,9 +2936,11 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
 
     const trunks = new THREE.InstancedMesh(trunkGeo, barkMat, treePositions.length);
     const branches = new THREE.InstancedMesh(branchGeo, barkMat, treePositions.length);
+    const branches2 = new THREE.InstancedMesh(branch2Geo, barkMat, treePositions.length);
     const crowns1 = new THREE.InstancedMesh(crown1Geo, foliageMat, treePositions.length);
     const crowns2 = new THREE.InstancedMesh(crown2Geo, foliageMat, treePositions.length);
     const crowns3 = new THREE.InstancedMesh(crown3Geo, foliageMat, treePositions.length);
+    const crowns4 = new THREE.InstancedMesh(crown4Geo, foliageMat, treePositions.length);
 
     const baseCol = new THREE.Color(baseFoliageHex);
     treePositions.forEach((tp, idx) => {
@@ -2363,23 +2950,26 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
       dummy.updateMatrix();
       trunks.setMatrixAt(idx, dummy.matrix);
       branches.setMatrixAt(idx, dummy.matrix);
+      branches2.setMatrixAt(idx, dummy.matrix);
       crowns1.setMatrixAt(idx, dummy.matrix);
       crowns2.setMatrixAt(idx, dummy.matrix);
       crowns3.setMatrixAt(idx, dummy.matrix);
+      crowns4.setMatrixAt(idx, dummy.matrix);
 
       tintColor.copy(baseCol).offsetHSL((rand() - 0.5) * 0.04, (rand() - 0.5) * 0.08, (rand() - 0.5) * 0.09);
-      crowns1.setColorAt(idx, tintColor);
-      crowns2.setColorAt(idx, tintColor.clone().offsetHSL(0, 0, 0.04));
-      crowns3.setColorAt(idx, tintColor.clone().offsetHSL(0, 0, 0.08));
+      crowns1.setColorAt(idx, tintColor.clone().offsetHSL(0, 0, -0.04));
+      crowns2.setColorAt(idx, tintColor);
+      crowns3.setColorAt(idx, tintColor.clone().offsetHSL(0, 0, 0.06));
+      crowns4.setColorAt(idx, tintColor.clone().offsetHSL(0.01, 0, 0.03));
     });
 
-    for (const m of [trunks, branches, crowns1, crowns2, crowns3]) {
+    for (const m of [trunks, branches, branches2, crowns1, crowns2, crowns3, crowns4]) {
       m.instanceMatrix.needsUpdate = true;
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
       m.computeBoundingSphere();
     }
 
-    group.add(trunks, branches, crowns1, crowns2, crowns3);
+    group.add(trunks, branches, branches2, crowns1, crowns2, crowns3, crowns4);
   }
 
   // Low organic roadside scrub bushes
@@ -2444,37 +3034,39 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
     group.add(rocks);
   }
 
-  // 8. Subtle roadside reflective delineator posts (non-blinding cat's-eye markers)
-  const postStep = 8;
-  const postCount = Math.floor(track.samples.length / postStep) * 2;
-  const postGeo = new THREE.BoxGeometry(0.12, 0.95, 0.12);
-  postGeo.translate(0, 0.48, 0);
+  // 8. Dynamic Collidable Flexible Motorsport Delineator Bollards (3D knock-down rigid-body physics!)
+  const maxDynamicPosts = 220;
+  const postGeo = new THREE.CylinderGeometry(0.068, 0.088, 0.96, 10);
+  // Center geometry around mid-height (y = 0) so 3D tumbling rotates around center of mass,
+  // while upright sync offsets y by +0.48m to plant rubber base cleanly on the shoulder
   const postMat = new THREE.MeshStandardMaterial({
-    color: 0xd0d4dc,
-    roughness: 0.52,
-    metalness: 0.2,
+    color: 0xffffff,
+    map: delineatorTex,
+    roughness: 0.46,
+    metalness: 0.14,
   });
-  const posts = new THREE.InstancedMesh(postGeo, postMat, postCount);
-  let pIdx = 0;
-  for (let i = 0; i < track.samples.length && pIdx < postCount - 1; i += postStep) {
-    const s = track.samples[i];
-    const yaw = Math.atan2(s.tangent.x, s.tangent.z);
-    for (const side of [-1, 1]) {
-      const lat = side * (shoulderOuter + 0.22);
-      dummy.position.set(
-        s.pos.x + s.right.x * lat,
-        s.pos.y + Math.sin(s.bankAngle) * lat,
-        s.pos.z + s.right.z * lat,
-      );
-      dummy.rotation.set(0, yaw, 0);
-      dummy.scale.setScalar(1);
-      dummy.updateMatrix();
-      posts.setMatrixAt(pIdx++, dummy.matrix);
+  const postsMesh = new THREE.InstancedMesh(postGeo, postMat, maxDynamicPosts);
+  postsMesh.frustumCulled = false;
+  postsMesh.count = 0;
+  group.add(postsMesh);
+
+  const postDummy = new THREE.Object3D();
+  postDummy.rotation.order = 'YXZ';
+  const syncPosts = (postStates: RoadsidePostState[]) => {
+    const n = Math.min(postStates.length, maxDynamicPosts);
+    postsMesh.count = n;
+    for (let i = 0; i < n; i++) {
+      const p = postStates[i];
+      // Upright base rests at p.y -> center is at p.y + 0.48; knocked/settled post uses ballistic center p.y + (upright blend)
+      const centerY = p.knocked ? p.y + (p.settled ? 0.0 : 0.34) : p.y + 0.48;
+      postDummy.position.set(p.x, centerY, p.z);
+      postDummy.rotation.set(p.rx, p.ry, p.rz);
+      postDummy.scale.setScalar(1);
+      postDummy.updateMatrix();
+      postsMesh.setMatrixAt(i, postDummy.matrix);
     }
-  }
-  posts.instanceMatrix.needsUpdate = true;
-  posts.computeBoundingSphere();
-  group.add(posts);
+    postsMesh.instanceMatrix.needsUpdate = true;
+  };
 
   // 9. Ambient World Atmosphere Motes (Petals / Snow / Canyon Dust / Coastal Sea Mist)
   const isPetal = course.treeStyle === 'sakura';
@@ -2507,9 +3099,12 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
   }
   group.add(ambientMesh);
 
-  // 10. Pooled zero-GC gameplay particle ring buffer
-  const particles = createParticlePool(220);
+  // 10. Pooled zero-GC gameplay particle ring buffer + persistent tire skidmark pool
+  const particles = createParticlePool(260);
   group.add(particles.mesh);
+
+  const skidmarks = createSkidmarkPool(360);
+  group.add(skidmarks.mesh);
 
   const setAtmosphere = (cfg: SkyAtmosphereConfig) => {
     skyUniforms.uTopColor.value.set(cfg.topHex);
@@ -2521,6 +3116,7 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
     skyUniforms.uStarStrength.value = cfg.starStrength;
 
     if (waterUniforms) {
+      waterUniforms.uHorizonColor.value.set(cfg.horizonHex);
       waterUniforms.uSunColor.value.set(cfg.sunHex);
       waterUniforms.uSunDir.value.copy(cfg.sunDir).normalize();
     }
@@ -2543,6 +3139,13 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
     // Rotate Race Control rooftop weather/telemetry radar dish smoothly
     stationBuild.radarDish.rotation.y = elapsed * 0.65;
 
+    // Gentle wind ripple on trackside motorsport pennant flags
+    for (let i = 0; i < flagsBuild.flagMeshes.length; i++) {
+      const f = flagsBuild.flagMeshes[i];
+      f.mesh.rotation.y = Math.sin(elapsed * 3.1 + f.phase) * 0.16;
+      f.mesh.rotation.z = Math.cos(elapsed * 2.3 + f.phase) * 0.04;
+    }
+
     for (let i = 0; i < ambientCount; i++) {
       const a = ambientOffsets[i];
       const fall = isHighAltitudeParticle ? (elapsed * 1.5 * a.speed) % ambientMaxHeight : 0;
@@ -2562,6 +3165,7 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
 
   const dispose = () => {
     particles.dispose();
+    skidmarks.dispose();
     const seenGeos = new Set<THREE.BufferGeometry>();
     const seenMats = new Set<THREE.Material>();
     group.traverse((obj) => {
@@ -2584,5 +3188,5 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
     }
   };
 
-  return { group, particles, setAtmosphere, update, dispose };
+  return { group, particles, skidmarks, syncPosts, setAtmosphere, update, dispose };
 }

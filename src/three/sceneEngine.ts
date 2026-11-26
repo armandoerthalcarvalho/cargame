@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -81,7 +80,8 @@ export class SolsticeSceneEngine {
   private sunLight: THREE.DirectionalLight;
   private rimLight: THREE.DirectionalLight;
   private hemiLight: THREE.HemisphereLight;
-  private envTexture: THREE.Texture | null = null;
+  private pmremGenerator: THREE.PMREMGenerator | null = null;
+  private envRenderTarget: THREE.WebGLRenderTarget | null = null;
   private contactShadowTex: THREE.CanvasTexture;
   private headlightBeamTex: THREE.CanvasTexture;
 
@@ -117,8 +117,11 @@ export class SolsticeSceneEngine {
   private finishDelayTimer = -1;
   private telemetryAccum = 0;
   private particleEmitAccum = 0;
+  private skidEmitAccum = 0;
   private currentFov = 62;
   private camRoll = 0;
+  private camAccelLag = 0;
+  private prevPlayerSpeed = 0;
   private modalOpen = false;
   private autostartSkipCountdown = false;
 
@@ -200,7 +203,7 @@ export class SolsticeSceneEngine {
       });
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 0.92;
+      renderer.toneMappingExposure = 1.05;
       renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
       renderer.shadowMap.enabled = !this.isSoftwareGl;
       renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -226,11 +229,9 @@ export class SolsticeSceneEngine {
       this.container.appendChild(renderer.domElement);
       this.renderer = renderer;
 
-      const pmrem = new THREE.PMREMGenerator(renderer);
-      this.envTexture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-      this.scene.environment = this.envTexture;
-      this.scene.environmentIntensity = 0.38;
-      pmrem.dispose();
+      this.pmremGenerator = new THREE.PMREMGenerator(renderer);
+      this.pmremGenerator.compileEquirectangularShader();
+      this.scene.environmentIntensity = 0.56;
 
       // Subtle high-threshold optical bloom on hardware GPUs (only true specular/LED peaks > 1.55 bloom)
       if (!this.isSoftwareGl) {
@@ -279,12 +280,12 @@ export class SolsticeSceneEngine {
     let fogHex = course.fogColor;
     let fogDensity = course.fogDensity;
     let sunHex = course.sunColor;
-    let sunIntensity = course.sunIntensity + 0.14;
-    let hemiIntensity = course.hemiIntensity + 0.04;
-    let envIntensity = 0.42;
+    let sunIntensity = course.sunIntensity + 0.36;
+    let hemiIntensity = course.hemiIntensity + 0.28;
+    let envIntensity = 0.88;
     let auroraStrength = course.hasAurora ? 0.85 : 0.0;
     let starStrength = course.hasAurora ? 0.65 : 0.0;
-    let headlightIntensity = 0.65;
+    let headlightIntensity = 0.72;
     let beamOpacity = course.hasAurora ? 0.14 : 0.0;
     let bloomStrength = course.hasAurora ? 0.14 : 0.1;
 
@@ -295,14 +296,14 @@ export class SolsticeSceneEngine {
       midHex = '#488cc2';
       horizonHex = '#b5d6ea';
       fogHex = '#a8cce0';
-      fogDensity = course.fogDensity * 0.78;
+      fogDensity = course.fogDensity * 0.74;
       sunHex = '#fff4e0';
-      sunIntensity = 1.72;
-      hemiIntensity = 0.6;
-      envIntensity = 0.42;
+      sunIntensity = 2.08;
+      hemiIntensity = 0.86;
+      envIntensity = 0.92;
       auroraStrength = 0.0;
       starStrength = 0.0;
-      headlightIntensity = 0.35;
+      headlightIntensity = 0.38;
       beamOpacity = 0.0;
       bloomStrength = 0.08;
       _sunDirScratch.set(course.sunPosition.x * 0.5, 290, course.sunPosition.z * 0.5);
@@ -311,14 +312,14 @@ export class SolsticeSceneEngine {
       midHex = '#182a50';
       horizonHex = '#593d66';
       fogHex = '#242f4a';
-      fogDensity = course.fogDensity * 1.12;
+      fogDensity = course.fogDensity * 1.08;
       sunHex = '#efa06e';
-      sunIntensity = 0.96;
-      hemiIntensity = 0.42;
-      envIntensity = 0.28;
+      sunIntensity = 1.24;
+      hemiIntensity = 0.58;
+      envIntensity = 0.62;
       auroraStrength = course.hasAurora ? 1.0 : 0.52;
-      starStrength = 0.9;
-      headlightIntensity = 1.15;
+      starStrength = 0.92;
+      headlightIntensity = 1.18;
       beamOpacity = 0.18;
       bloomStrength = 0.16;
       _sunDirScratch.set(course.sunPosition.x, 42, course.sunPosition.z);
@@ -329,9 +330,9 @@ export class SolsticeSceneEngine {
     this.scene.environmentIntensity = envIntensity;
     this.sunLight.color.set(sunHex);
     this.sunLight.intensity = sunIntensity;
-    this.rimLight.color.set(this.timeOfDay === 'twilight' ? '#70aadf' : '#c4dcf2');
-    this.rimLight.intensity = this.timeOfDay === 'twilight' ? 0.26 : 0.2;
-    this.hemiLight.color.set(this.timeOfDay === 'twilight' ? '#6b92cc' : course.hemiSkyColor);
+    this.rimLight.color.set(this.timeOfDay === 'twilight' ? '#7ab6ec' : '#d2e6fa');
+    this.rimLight.intensity = this.timeOfDay === 'twilight' ? 0.42 : 0.36;
+    this.hemiLight.color.set(this.timeOfDay === 'twilight' ? '#7aa0d8' : course.hemiSkyColor);
     this.hemiLight.groundColor.set(course.hemiGroundColor);
     this.hemiLight.intensity = hemiIntensity;
 
@@ -349,9 +350,90 @@ export class SolsticeSceneEngine {
       starStrength,
     });
 
+    this.updateSkyReflectionEnv(
+      topHex,
+      midHex,
+      horizonHex,
+      course.hemiGroundColor,
+      sunHex,
+      _sunDirScratch,
+    );
+
     for (const rig of this.carRigs.values()) {
       rig.setHeadlightBoost(headlightIntensity, beamOpacity);
     }
+  }
+
+  private updateSkyReflectionEnv(
+    topHex: string,
+    midHex: string,
+    horizonHex: string,
+    groundHex: string,
+    sunHex: string,
+    sunDir: THREE.Vector3,
+  ): void {
+    if (!this.pmremGenerator) return;
+
+    const envScene = new THREE.Scene();
+    const skyGeo = new THREE.SphereGeometry(20, 24, 16);
+    const skyMat = new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      uniforms: {
+        uTop: { value: new THREE.Color(topHex) },
+        uMid: { value: new THREE.Color(midHex) },
+        uHorizon: { value: new THREE.Color(horizonHex) },
+        uGround: { value: new THREE.Color(groundHex) },
+        uSun: { value: new THREE.Color(sunHex) },
+        uSunDir: { value: sunDir.clone().normalize() },
+      },
+      vertexShader: /* glsl */ `
+        varying vec3 vDir;
+        void main() {
+          vDir = normalize(position);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform vec3 uTop;
+        uniform vec3 uMid;
+        uniform vec3 uHorizon;
+        uniform vec3 uGround;
+        uniform vec3 uSun;
+        uniform vec3 uSunDir;
+        varying vec3 vDir;
+        void main() {
+          vec3 d = normalize(vDir);
+          vec3 col;
+          if (d.y >= 0.0) {
+            col = mix(uHorizon, uMid, smoothstep(0.0, 0.30, d.y));
+            col = mix(col, uTop, smoothstep(0.24, 0.85, d.y));
+            col *= 1.55;
+          } else {
+            col = mix(uHorizon * 1.12, uGround * 0.92, smoothstep(0.0, -0.35, d.y));
+          }
+          float sunDot = max(dot(d, normalize(uSunDir)), 0.0);
+          col += uSun * (pow(sunDot, 10.0) * 0.55 + pow(sunDot, 84.0) * 2.1);
+          // Crisp luminous skyband & overhead cloud bounce for glossy automotive clearcoat & alloy rims
+          float skyHighlight = exp(-abs(d.y - 0.18) * 9.5) * 0.52;
+          float zenithFill = smoothstep(0.35, 0.92, d.y) * 0.32;
+          col += mix(uHorizon, uSun, 0.45) * skyHighlight + mix(uMid, vec3(0.92, 0.95, 1.0), 0.35) * zenithFill;
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `,
+    });
+
+    const skyDome = new THREE.Mesh(skyGeo, skyMat);
+    envScene.add(skyDome);
+
+    const nextTarget = this.pmremGenerator.fromScene(envScene, 0.025);
+    skyGeo.dispose();
+    skyMat.dispose();
+
+    if (this.envRenderTarget) {
+      this.envRenderTarget.dispose();
+    }
+    this.envRenderTarget = nextTarget;
+    this.scene.environment = nextTarget.texture;
   }
 
   public setTimeOfDay(tod: TimeOfDay): void {
@@ -386,7 +468,12 @@ export class SolsticeSceneEngine {
       this.courseEnv = buildCourseEnvironment(this.track, maxAniso);
       this.loadedEnvCourseId = courseId;
       this.scene.add(this.courseEnv.group);
+    } else {
+      this.courseEnv?.skidmarks.clear();
     }
+    this.courseEnv?.syncPosts(this.world.posts);
+    this.prevPlayerSpeed = 0;
+    this.camAccelLag = 0;
 
     // Spawn hyper-detailed composite 3D cars for player + rivals
     const rivalNumbers = ['11', '42', '88'];
@@ -786,9 +873,27 @@ export class SolsticeSceneEngine {
     const speedRatio = Math.max(0, Math.min(1.3, Math.abs(p.speed) / 64));
     const boosting = p.isBoosting || p.padBoostTimer > 0;
 
+    // Longitudinal acceleration squat / braking dive G-force camera feel
+    const accel = (p.speed - this.prevPlayerSpeed) / Math.max(0.008, dt);
+    this.prevPlayerSpeed = p.speed;
+    const targetLag = Math.max(-0.55, Math.min(0.85, accel * 0.022));
+    this.camAccelLag += (targetLag - this.camAccelLag) * (1 - Math.exp(-6.5 * dt));
+
+    // Tactile micro-road vibration at high speed, serrated apex curbs, or gravel runoff shoulder
+    const surfaceRough = p.surface === 'shoulder' ? 0.048 : p.surface === 'curb' ? 0.026 : 0.008;
+    const roadBuzzY =
+      !p.airborne && speedRatio > 0.25
+        ? Math.sin(elapsed * 42) * surfaceRough * speedRatio
+        : 0;
+
     if (this.cameraMode === 'chase') {
-      const dist = 8.0 + speedRatio * 1.45 + (boosting ? 0.95 : 0) + (p.airborne ? 1.1 : 0);
-      const height = 3.25 + speedRatio * 0.35 + (p.airborne ? 0.65 : 0);
+      const dist =
+        8.0 +
+        speedRatio * 1.45 +
+        this.camAccelLag +
+        (boosting ? 0.95 : 0) +
+        (p.airborne ? 1.1 : 0);
+      const height = 3.25 + speedRatio * 0.35 + roadBuzzY + (p.airborne ? 0.65 : 0);
       const driftLead = p.driftAngle * 2.2;
       _camDesired.set(
         p.x - fwd.x * dist + right.x * driftLead,
@@ -802,7 +907,11 @@ export class SolsticeSceneEngine {
       const lookDamp = 1 - Math.exp(-12 * dt);
       _camLook.lerp(_camTarget, lookDamp);
     } else if (this.cameraMode === 'hood') {
-      _camDesired.set(p.x + fwd.x * 0.65, p.y + 1.48, p.z + fwd.z * 0.65);
+      _camDesired.set(
+        p.x + fwd.x * (0.65 - this.camAccelLag * 0.14),
+        p.y + 1.48 + roadBuzzY * 0.65,
+        p.z + fwd.z * (0.65 - this.camAccelLag * 0.14),
+      );
       _camTarget.set(p.x + fwd.x * 28, p.y + 1.22, p.z + fwd.z * 28);
       this.camera.position.copy(_camDesired);
       _camLook.copy(_camTarget);
@@ -832,17 +941,47 @@ export class SolsticeSceneEngine {
     const shakeZ = shake > 0.001 ? Math.sin(elapsed * 64) * shake * 0.055 : 0;
     const shakeX = shake > 0.001 ? Math.cos(elapsed * 53) * shake * 0.032 : 0;
     this.camera.rotation.z += this.camRoll + shakeZ;
-    this.camera.rotation.x += shakeX;
+    this.camera.rotation.x += shakeX - this.camAccelLag * 0.012;
   }
 
-  private emitVehicleParticles(dt: number): void {
+  private emitVehicleParticles(dt: number, playerBraking: boolean): void {
     if (!this.courseEnv) return;
     this.particleEmitAccum += dt;
-    if (this.particleEmitAccum < 0.032) return;
-    this.particleEmitAccum = 0;
+    this.skidEmitAccum += dt;
 
     const pool = this.courseEnv.particles;
+    const skids = this.courseEnv.skidmarks;
     const allCars = [this.world.player, ...this.world.rivals];
+
+    // Persistent 3D rubber tire skidmarks during drifting or hard braking
+    if (this.skidEmitAccum >= 0.026) {
+      this.skidEmitAccum = 0;
+      for (const car of allCars) {
+        if (car.airborne || car.surface !== 'asphalt') continue;
+        const speedAbs = Math.abs(car.speed);
+        const hardBrake = car.isPlayer && playerBraking && speedAbs > 18;
+        if ((car.isDrifting && speedAbs > 12) || hardBrake) {
+          const fwd = headingToForward(car.heading);
+          const right = headingToRight(car.heading);
+          const sample = sampleTrackAtDistance(this.track, car.trackS);
+          const segLen = Math.max(0.8, Math.min(2.4, speedAbs * 0.042));
+          for (const side of [-0.94, 0.94]) {
+            skids.stamp(
+              car.x - fwd.x * 1.28 + right.x * side,
+              car.groundY,
+              car.z - fwd.z * 1.28 + right.z * side,
+              car.heading,
+              sample.bankAngle,
+              segLen,
+              0.31,
+            );
+          }
+        }
+      }
+    }
+
+    if (this.particleEmitAccum < 0.032) return;
+    this.particleEmitAccum = 0;
 
     for (const car of allCars) {
       const fwd = headingToForward(car.heading);
@@ -875,6 +1014,25 @@ export class SolsticeSceneEngine {
           0.36,
           0.32,
           car.padBoostTimer > 0 ? 0x38e8ff : 0xffaa2b,
+        );
+      }
+
+      // High-speed aerodynamic wingtip airflow streaks past player car (>185 KM/H or boosting/drafting)
+      if (
+        car.isPlayer &&
+        (Math.abs(car.speed) * 3.6 > 185 || car.isBoosting || car.slipstreamIntensity > 0.25)
+      ) {
+        const side = Math.random() > 0.5 ? 1.06 : -1.06;
+        pool.emit(
+          car.x - fwd.x * 1.9 + right.x * side,
+          car.y + 1.16 + (Math.random() - 0.5) * 0.14,
+          car.z - fwd.z * 1.9 + right.z * side,
+          -fwd.x * 16,
+          0.08,
+          -fwd.z * 16,
+          0.11,
+          0.18,
+          car.slipstreamIntensity > 0.25 ? 0x7dd3fc : 0xe2e8f0,
         );
       }
 
@@ -981,6 +1139,8 @@ export class SolsticeSceneEngine {
         driftAngle: this.world.player.driftAngle,
         isBoosting: this.world.player.isBoosting || this.world.player.padBoostTimer > 0,
         airborne: this.world.player.airborne,
+        gear: this.world.player.gear,
+        surface: this.world.player.surface,
       });
 
       if (events.length > 0) {
@@ -1003,6 +1163,23 @@ export class SolsticeSceneEngine {
                 0xffcf5c,
               );
             }
+          } else if (ev.type === 'post-hit') {
+            const px = ev.x ?? p.x;
+            const py = ev.y ?? p.y + 0.5;
+            const pz = ev.z ?? p.z;
+            for (let i = 0; i < 8; i++) {
+              this.courseEnv.particles.emit(
+                px + (Math.random() - 0.5) * 0.5,
+                py + Math.random() * 0.4,
+                pz + (Math.random() - 0.5) * 0.5,
+                (Math.random() - 0.5) * 9,
+                2.5 + Math.random() * 4.5,
+                (Math.random() - 0.5) * 9,
+                0.14,
+                0.36,
+                i % 2 === 0 ? 0xe85d1a : 0xe7e8ec,
+              );
+            }
           } else if (ev.type === 'apex-ring' || ev.type === 'boost-pad' || ev.type === 'jump-land') {
             const burstColor =
               ev.type === 'apex-ring' ? 0x34f5c5 : ev.type === 'boost-pad' ? 0x38e8ff : 0xf5d79b;
@@ -1023,6 +1200,8 @@ export class SolsticeSceneEngine {
         }
       }
 
+      this.courseEnv?.syncPosts(this.world.posts);
+
       const allCars = [this.world.player, ...this.world.rivals];
       for (const car of allCars) {
         const rig = this.carRigs.get(car.id);
@@ -1032,7 +1211,7 @@ export class SolsticeSceneEngine {
         syncCarRigToState(rig, car, sample.bankAngle, braking, this.world.elapsedTime);
       }
 
-      this.emitVehicleParticles(dt);
+      this.emitVehicleParticles(dt, input.brake > 0.15);
 
       if (this.world.player.finished) {
         if (this.finishDelayTimer < 0) {
@@ -1128,7 +1307,14 @@ export class SolsticeSceneEngine {
     this.clearCourseObjects();
     this.contactShadowTex.dispose();
     this.headlightBeamTex.dispose();
-    if (this.envTexture) this.envTexture.dispose();
+    if (this.envRenderTarget) {
+      this.envRenderTarget.dispose();
+      this.envRenderTarget = null;
+    }
+    if (this.pmremGenerator) {
+      this.pmremGenerator.dispose();
+      this.pmremGenerator = null;
+    }
     if (this.composer) {
       this.composer.dispose();
       this.composer = null;

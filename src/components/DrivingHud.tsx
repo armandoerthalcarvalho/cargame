@@ -110,8 +110,16 @@ export function DrivingHud({
 
   const cameraLabel =
     telemetry.cameraMode === 'chase' ? 'Chase' : telemetry.cameraMode === 'hood' ? 'Hood' : 'Helo';
-  const radioName =
-    RADIO_STATIONS.find((s) => s.id === radioStation)?.name.split(' ')[0] ?? 'Radio';
+  const radioMeta = RADIO_STATIONS.find((s) => s.id === radioStation);
+  const radioName = radioMeta?.name.split(' ')[0] ?? 'Radio';
+  const trackSubtitle =
+    radioStation === 'solstice'
+      ? 'Golden Horizon'
+      : radioStation === 'coastal'
+        ? 'Amalfi Drift'
+        : radioStation === 'velocity'
+          ? 'Apex Overdrive'
+          : 'Engine Pure';
 
   const bannerBorder =
     telemetry.bannerTone === 'emerald'
@@ -122,16 +130,19 @@ export function DrivingHud({
           ? 'border-[#f87171]/70 text-[#fee2e2]'
           : 'border-[#f59e0b]/70 text-[#f8f5ef]';
 
-  const highSpeedBoostGlow = telemetry.isBoosting && telemetry.speedKmh > 170;
+  const highSpeedBoostGlow = telemetry.isBoosting && telemetry.speedKmh > 165;
+  const highSpeedRushOpacity = Math.max(0, Math.min(0.65, (telemetry.speedKmh - 185) / 140));
 
   return (
     <div className="fixed inset-0 z-10 pointer-events-none select-none">
-      {/* Subtle compositor-only peripheral boost speed-vignette (zero backdrop-filter) */}
+      {/* Subtle compositor-only peripheral high-speed velocity & boost vignette (zero backdrop-filter) */}
       <div
         className="fixed inset-0 pointer-events-none transition-opacity duration-200"
         style={{
-          opacity: highSpeedBoostGlow ? 1 : 0,
-          boxShadow: 'inset 0 0 96px rgba(56, 189, 248, 0.3)',
+          opacity: highSpeedBoostGlow ? 1 : highSpeedRushOpacity,
+          boxShadow: highSpeedBoostGlow
+            ? 'inset 0 0 110px rgba(56, 189, 248, 0.34)'
+            : 'inset 0 0 96px rgba(8, 12, 20, 0.58)',
         }}
       />
 
@@ -299,8 +310,8 @@ export function DrivingHud({
         <button
           type="button"
           tabIndex={-1}
-          aria-label={`Cycle radio station (${radioName})`}
-          title={`Radio: ${radioName}`}
+          aria-label={`Cycle radio station (${radioName} — ${trackSubtitle})`}
+          title={`Radio: ${radioName} · ${trackSubtitle}`}
           onClick={(e) => {
             e.currentTarget.blur();
             onCycleRadio();
@@ -309,6 +320,9 @@ export function DrivingHud({
         >
           <span className="text-[#f59e0b]">FM</span>
           <span className="hidden md:inline">{radioName}</span>
+          <span className="hidden xl:inline text-[10px] font-medium text-[#9aa6b8]">
+            · {trackSubtitle}
+          </span>
         </button>
 
         <button

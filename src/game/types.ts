@@ -203,6 +203,29 @@ export interface RivalController {
   overtakeTimer: number;
 }
 
+export interface RoadsidePostState {
+  id: number;
+  baseX: number;
+  baseY: number;
+  baseZ: number;
+  baseYaw: number;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  rx: number;
+  ry: number;
+  rz: number;
+  vrx: number;
+  vry: number;
+  vrz: number;
+  knocked: boolean;
+  settled: boolean;
+  hitCooldown: number;
+}
+
 export interface RaceEvent {
   type:
     | 'checkpoint'
@@ -210,6 +233,7 @@ export interface RaceEvent {
     | 'race-finish'
     | 'car-bump'
     | 'barrier-hit'
+    | 'post-hit'
     | 'boost-ignite'
     | 'drift-bank'
     | 'boost-pad'
@@ -221,6 +245,9 @@ export interface RaceEvent {
   intensity: number;
   label?: string;
   points?: number;
+  x?: number;
+  y?: number;
+  z?: number;
 }
 
 export interface RaceWorldState {
@@ -237,6 +264,7 @@ export interface RaceWorldState {
   player: CarState;
   rivals: CarState[];
   rivalControllers: RivalController[];
+  posts: RoadsidePostState[];
   standings: string[];
   bannerText: string | null;
   bannerTone: 'amber' | 'cyan' | 'emerald' | 'red';

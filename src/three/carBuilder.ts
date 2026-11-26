@@ -1,10 +1,14 @@
 import * as THREE from 'three';
 import type { CarState, LiveryConfig, PaintFinish, RimFinish } from '../game/types';
 import {
+  createBrakeRotorTexture,
+  createCarbonWeaveTexture,
+  createCockpitDashTexture,
   createDoorNumberTexture,
   createHoneycombGrilleTexture,
   createLicensePlateTexture,
   createLiveryTexture,
+  createTireTreadTexture,
 } from './textures';
 
 export interface CarMeshRig {
@@ -196,6 +200,14 @@ let sharedGeos: {
   headlightBeam: THREE.PlaneGeometry;
   flame: THREE.ConeGeometry;
   shadowPlane: THREE.PlaneGeometry;
+  dashCluster: THREE.PlaneGeometry;
+  towHookRing: THREE.TorusGeometry;
+  fuelCapRing: THREE.CylinderGeometry;
+  fuelCapCenter: THREE.CylinderGeometry;
+  doorSeamVert: THREE.BoxGeometry;
+  sharkFin: THREE.BoxGeometry;
+  hoodPin: THREE.CylinderGeometry;
+  exhaustCollar: THREE.BoxGeometry;
 } | null = null;
 
 function getSharedCarGeometries() {
@@ -225,7 +237,7 @@ function getSharedCarGeometries() {
   const exhaustInner = new THREE.CylinderGeometry(0.052, 0.052, 0.355, 12);
   exhaustInner.rotateX(Math.PI / 2);
 
-  const headlightProjector = new THREE.CylinderGeometry(0.048, 0.052, 0.06, 12);
+  const headlightProjector = new THREE.CylinderGeometry(0.036, 0.04, 0.052, 12);
   headlightProjector.rotateX(Math.PI / 2);
 
   const flame = new THREE.ConeGeometry(0.12, 1.05, 10);
@@ -245,6 +257,15 @@ function getSharedCarGeometries() {
   headlightBeam.translate(0, 0, 4.4);
 
   const licensePlate = new THREE.PlaneGeometry(0.56, 0.14);
+
+  const fuelCapRing = new THREE.CylinderGeometry(0.088, 0.088, 0.024, 14);
+  fuelCapRing.rotateZ(Math.PI / 2);
+
+  const fuelCapCenter = new THREE.CylinderGeometry(0.068, 0.068, 0.032, 14);
+  fuelCapCenter.rotateZ(Math.PI / 2);
+
+  const towHookRing = new THREE.TorusGeometry(0.062, 0.015, 8, 16);
+  towHookRing.rotateX(Math.PI / 2);
 
   sharedGeos = {
     body: createBodyProfileGeometry(),
@@ -286,9 +307,9 @@ function getSharedCarGeometries() {
     wingBlade: new THREE.BoxGeometry(2.02, 0.065, 0.38),
     wingEndplate: new THREE.BoxGeometry(0.05, 0.3, 0.46),
     wingPylon: new THREE.BoxGeometry(0.06, 0.36, 0.24),
-    headlightHousing: new THREE.BoxGeometry(0.48, 0.105, 0.12),
+    headlightHousing: new THREE.BoxGeometry(0.52, 0.11, 0.085),
     headlightProjector,
-    drlBlade: new THREE.BoxGeometry(0.46, 0.024, 0.05),
+    drlBlade: new THREE.BoxGeometry(0.44, 0.022, 0.032),
     tailHousing: new THREE.BoxGeometry(1.78, 0.14, 0.08),
     tailBar: new THREE.BoxGeometry(1.70, 0.042, 0.06),
     tailPod: new THREE.BoxGeometry(0.36, 0.092, 0.07),
@@ -306,6 +327,14 @@ function getSharedCarGeometries() {
     headlightBeam,
     flame,
     shadowPlane,
+    dashCluster: new THREE.PlaneGeometry(0.34, 0.095),
+    towHookRing,
+    fuelCapRing,
+    fuelCapCenter,
+    doorSeamVert: new THREE.BoxGeometry(0.012, 0.56, 0.014),
+    sharkFin: new THREE.BoxGeometry(0.026, 0.13, 0.24),
+    hoodPin: new THREE.CylinderGeometry(0.028, 0.032, 0.016, 10),
+    exhaustCollar: new THREE.BoxGeometry(1.24, 0.19, 0.055),
   };
   return sharedGeos;
 }
@@ -390,11 +419,42 @@ export function buildCompositeCar(opts: {
     envMapIntensity: 0.65,
   });
 
-  const carbonMaterial = new THREE.MeshStandardMaterial({
-    color: 0x161b23,
-    metalness: 0.24,
-    roughness: 0.64,
-    envMapIntensity: 0.48,
+  const carbonTex = createCarbonWeaveTexture(opts.maxAnisotropy);
+  const rotorTex = createBrakeRotorTexture(opts.maxAnisotropy);
+  const tireTex = createTireTreadTexture(opts.maxAnisotropy);
+  const dashTex = createCockpitDashTexture(opts.accentColor, opts.maxAnisotropy);
+
+  const carbonMaterial = new THREE.MeshPhysicalMaterial({
+    color: 0xffffff,
+    map: carbonTex.albedo,
+    bumpMap: carbonTex.bump,
+    bumpScale: 0.015,
+    metalness: 0.26,
+    roughness: 0.44,
+    clearcoat: 0.58,
+    clearcoatRoughness: 0.22,
+    envMapIntensity: 0.62,
+  });
+
+  const towHookMaterial = new THREE.MeshStandardMaterial({
+    color: 0xc92525,
+    metalness: 0.65,
+    roughness: 0.28,
+    envMapIntensity: 0.72,
+  });
+
+  const seamMaterial = new THREE.MeshStandardMaterial({
+    color: 0x090b0f,
+    metalness: 0.1,
+    roughness: 0.9,
+  });
+
+  const dashClusterMaterial = new THREE.MeshStandardMaterial({
+    map: dashTex,
+    emissiveMap: dashTex,
+    emissive: new THREE.Color(0xffffff),
+    emissiveIntensity: 0.48,
+    roughness: 0.24,
   });
 
   const interiorMaterial = new THREE.MeshStandardMaterial({
@@ -417,7 +477,7 @@ export function buildCompositeCar(opts: {
     roughness: 0.55,
   });
 
-  // Tinted semi-transparent automotive glass revealing cockpit seats & rollcage inside
+  // Tinted semi-transparent automotive glass revealing cockpit seats, digital dash & rollcage inside
   const canopyMaterial = new THREE.MeshPhysicalMaterial({
     color: 0x0d1522,
     metalness: 0.16,
@@ -425,15 +485,15 @@ export function buildCompositeCar(opts: {
     clearcoat: 0.96,
     clearcoatRoughness: 0.06,
     transparent: true,
-    opacity: 0.64,
-    envMapIntensity: 0.9,
+    opacity: 0.62,
+    envMapIntensity: 0.95,
   });
 
   const rimMaterial = new THREE.MeshStandardMaterial({
     color: 0xc8d2de,
     metalness: 0.92,
     roughness: 0.18,
-    envMapIntensity: 0.9,
+    envMapIntensity: 0.95,
   });
   if (opts.initialConfig) {
     applyRimFinish(rimMaterial, opts.initialConfig.rimFinish);
@@ -443,6 +503,7 @@ export function buildCompositeCar(opts: {
     color: 0x9aa8bc,
     metalness: 0.94,
     roughness: 0.2,
+    envMapIntensity: 0.9,
   });
 
   const darkBoreMaterial = new THREE.MeshStandardMaterial({
@@ -452,15 +513,17 @@ export function buildCompositeCar(opts: {
   });
 
   const rotorMaterial = new THREE.MeshStandardMaterial({
-    color: 0x7a828f,
+    color: 0xffffff,
+    map: rotorTex,
     emissive: 0xd9480f,
     emissiveIntensity: 0.04,
-    metalness: 0.82,
-    roughness: 0.34,
+    metalness: 0.84,
+    roughness: 0.3,
   });
 
   const tireMaterial = new THREE.MeshStandardMaterial({
-    color: 0x16191f,
+    color: 0xffffff,
+    map: tireTex,
     metalness: 0.03,
     roughness: 0.92,
   });
@@ -524,6 +587,12 @@ export function buildCompositeCar(opts: {
   dash.position.set(0, 1.02, 0.34);
   bodyGroup.add(dash);
 
+  // Subtle illuminated GT telemetry instrument cluster visible through tinted windshield
+  const dashCluster = new THREE.Mesh(geos.dashCluster, dashClusterMaterial);
+  dashCluster.position.set(-0.28, 1.11, 0.24);
+  dashCluster.rotation.set(-0.18, Math.PI, 0);
+  bodyGroup.add(dashCluster);
+
   const steerWheel = new THREE.Mesh(geos.steeringWheel, carbonMaterial);
   steerWheel.position.set(-0.28, 1.08, 0.18);
   steerWheel.rotation.x = 0.28;
@@ -577,12 +646,23 @@ export function buildCompositeCar(opts: {
   roofScoop.position.set(0, 1.41, -0.34);
   bodyGroup.add(roofScoop);
 
-  // 4. Twin sculpted hood heat-extractor vents & Rear engine deck carbon louvers (cleanly proud of hood y=0.84)
+  // Aerodynamic carbon roof shark-fin telemetry antenna
+  const sharkFin = new THREE.Mesh(geos.sharkFin, carbonMaterial);
+  sharkFin.position.set(0, 1.38, -0.92);
+  sharkFin.rotation.x = -0.35;
+  bodyGroup.add(sharkFin);
+
+  // 4. Twin sculpted hood heat-extractor vents + Quick-release hood pins + Rear engine deck carbon louvers
   for (const side of [-1, 1]) {
     const hVent = new THREE.Mesh(geos.hoodVent, grilleMaterial);
     hVent.position.set(side * 0.56, 0.855, 1.24);
     hVent.rotation.x = 0.135;
     bodyGroup.add(hVent);
+
+    const hPin = new THREE.Mesh(geos.hoodPin, titaniumTipMaterial);
+    hPin.position.set(side * 0.54, 0.725, 1.94);
+    hPin.rotation.x = 0.22;
+    bodyGroup.add(hPin);
   }
 
   for (let i = 0; i < 3; i++) {
@@ -614,6 +694,14 @@ export function buildCompositeCar(opts: {
     const handle = new THREE.Mesh(geos.doorHandle, rimMaterial);
     handle.position.set(side * 0.985, 0.80, -0.18);
     bodyGroup.add(handle);
+
+    // Crisp recessed door shut-lines framing each stamped body door panel
+    const seamFront = new THREE.Mesh(geos.doorSeamVert, seamMaterial);
+    seamFront.position.set(side * 0.974, 0.58, 0.68);
+    bodyGroup.add(seamFront);
+    const seamRear = new THREE.Mesh(geos.doorSeamVert, seamMaterial);
+    seamRear.position.set(side * 0.974, 0.58, -0.28);
+    bodyGroup.add(seamRear);
 
     const mirrorStalk = new THREE.Mesh(geos.mirrorStalk, carbonMaterial);
     mirrorStalk.position.set(side * 0.92, 0.94, 0.34);
@@ -656,7 +744,15 @@ export function buildCompositeCar(opts: {
     bodyGroup.add(arch);
   }
 
-  // 7. Front carbon aero splitter + framed honeycomb radiator grille (cleanly proud of z=+2.36 nose!)
+  // Machined brushed-aluminum recessed fuel filler cap on right rear quarter haunch
+  const fuelRing = new THREE.Mesh(geos.fuelCapRing, seamMaterial);
+  fuelRing.position.set(0.972, 0.81, -1.16);
+  bodyGroup.add(fuelRing);
+  const fuelCap = new THREE.Mesh(geos.fuelCapCenter, titaniumTipMaterial);
+  fuelCap.position.set(0.976, 0.81, -1.16);
+  bodyGroup.add(fuelCap);
+
+  // 7. Front carbon aero splitter + framed honeycomb radiator grille + forged racing tow hook
   const splitter = new THREE.Mesh(geos.splitter, carbonMaterial);
   splitter.position.set(0, 0.21, 2.26);
   bodyGroup.add(splitter);
@@ -668,6 +764,10 @@ export function buildCompositeCar(opts: {
   const grille = new THREE.Mesh(geos.grille, grilleMaterial);
   grille.position.set(0, 0.37, 2.385);
   bodyGroup.add(grille);
+
+  const towHook = new THREE.Mesh(geos.towHookRing, towHookMaterial);
+  towHook.position.set(0.38, 0.35, 2.435);
+  bodyGroup.add(towHook);
 
   // 8. Rear honeycomb heat-vent fascia + framed GT license plate + carbon diffuser + twin titanium exhausts
   const rearFascia = new THREE.Mesh(geos.rearFascia, grilleMaterial);
@@ -707,6 +807,10 @@ export function buildCompositeCar(opts: {
   const rainLamp = new THREE.Mesh(geos.rainLamp, rainLampMaterial);
   rainLamp.position.set(0, 0.33, -2.47);
   bodyGroup.add(rainLamp);
+
+  const exhaustCollar = new THREE.Mesh(geos.exhaustCollar, seamMaterial);
+  exhaustCollar.position.set(0, 0.32, -2.37);
+  bodyGroup.add(exhaustCollar);
 
   for (const ex of [-0.46, 0.46]) {
     const pipe = new THREE.Mesh(geos.exhaustOuter, titaniumTipMaterial);
@@ -749,8 +853,8 @@ export function buildCompositeCar(opts: {
   // 10. Flush Sculpted Twin-Projector Headlights + Sharp LED DRL Blades + Smoked Quad Tail Bar
   for (const side of [-1, 1]) {
     const hlGroup = new THREE.Group();
-    hlGroup.position.set(side * 0.65, 0.51, 2.31);
-    hlGroup.rotation.set(0.16, side * 0.14, side * -0.05);
+    hlGroup.position.set(side * 0.65, 0.525, 2.338);
+    hlGroup.rotation.set(0.18, side * 0.12, side * -0.04);
 
     const hlHousing = new THREE.Mesh(geos.headlightHousing, carbonMaterial);
     hlGroup.add(hlHousing);
@@ -758,13 +862,13 @@ export function buildCompositeCar(opts: {
     // Twin round projector lenses recessed flush inside dark smoked headlamp housing
     for (const px of [-0.11, 0.11]) {
       const proj = new THREE.Mesh(geos.headlightProjector, headlightMaterial);
-      proj.position.set(px, 0.01, 0.052);
+      proj.position.set(px, 0.008, 0.032);
       hlGroup.add(proj);
     }
 
     // Crisp lower LED Daytime Running Light signature strip
     const drl = new THREE.Mesh(geos.drlBlade, headlightMaterial);
-    drl.position.set(0, -0.042, 0.058);
+    drl.position.set(0, -0.038, 0.038);
     hlGroup.add(drl);
 
     bodyGroup.add(hlGroup);
@@ -952,6 +1056,9 @@ export function buildCompositeCar(opts: {
     bodyMaterial.dispose();
     accentMaterial.dispose();
     carbonMaterial.dispose();
+    towHookMaterial.dispose();
+    seamMaterial.dispose();
+    dashClusterMaterial.dispose();
     interiorMaterial.dispose();
     seatTrimMaterial.dispose();
     grilleMaterial.dispose();
@@ -970,6 +1077,11 @@ export function buildCompositeCar(opts: {
     doorMaterial.dispose();
     plateMaterial.dispose();
     shadowMat.dispose();
+    carbonTex.albedo.dispose();
+    carbonTex.bump.dispose();
+    rotorTex.dispose();
+    tireTex.dispose();
+    dashTex.dispose();
     if (liveryTexture) liveryTexture.dispose();
     if (doorTexture) doorTexture.dispose();
     if (plateTexture) plateTexture.dispose();

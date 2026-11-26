@@ -4,6 +4,7 @@ import {
   normalizeAngle,
   stepVehiclePhysics,
 } from './physics';
+import { createRoadsidePosts, stepRoadsidePosts } from './posts';
 import { sampleTrackAtDistance, wrapDistance } from './track';
 import type { TrackData } from './track';
 import type {
@@ -119,6 +120,7 @@ export function createRaceWorld(
     player,
     rivals,
     rivalControllers,
+    posts: createRoadsidePosts(track),
     standings,
     bannerText: null,
     bannerTone: 'amber',
@@ -577,12 +579,15 @@ export function stepRaceWorld(
   }
 
   resolveCarCollisions(allCars, frameEvents);
+  stepRoadsidePosts(world.posts, allCars, track, dt, frameEvents);
   for (const ev of frameEvents) {
     if (ev.type === 'car-bump') {
       world.cameraTrauma = Math.min(1, world.cameraTrauma + ev.intensity * 0.65);
       if (ev.intensity > 0.5) {
         world.hitstopTimer = 0.04;
       }
+    } else if (ev.type === 'post-hit') {
+      world.cameraTrauma = Math.min(1, world.cameraTrauma + ev.intensity * 0.16);
     }
     if (ev.label && (ev.type === 'lap-complete' || ev.type === 'race-finish')) {
       world.bannerText = ev.label;

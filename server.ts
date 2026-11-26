@@ -5,7 +5,7 @@ import path from 'path';
 
 const PORT = Number(process.env.PORT) || 3000;
 const IS_PROD = process.env.NODE_ENV === 'production';
-const HMR_DISABLED = process.env.DISABLE_HMR === 'true';
+const HMR_ENABLED = process.env.ENABLE_HMR === 'true' && process.env.DISABLE_HMR !== 'true';
 
 async function createServer() {
   const app = express();
@@ -27,8 +27,8 @@ async function createServer() {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: HMR_DISABLED ? false : { server: httpServer },
-        watch: HMR_DISABLED ? null : undefined,
+        hmr: HMR_ENABLED ? { server: httpServer } : false,
+        watch: HMR_ENABLED ? undefined : null,
       },
       appType: 'spa',
     });

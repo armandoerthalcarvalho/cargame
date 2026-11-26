@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { COURSE_LIST } from './courses';
+import { computeLandmarkTrackClearance, listCourseLandmarkFootprints } from './landmarks';
 import {
   buildTrack,
   forwardToRight,
@@ -122,14 +123,40 @@ test('forwardToRight obeys right-handed chase-camera orientation', () => {
   assert.ok(Math.abs(r.z) < 1e-6);
 });
 
-test('groundHeightAt stays finite and below asphalt along centerline on all 4 worlds', () => {
+test('groundHeightAt stays finite and below asphalt/shoulder across full road width on all 4 worlds', () => {
   for (const course of COURSE_LIST) {
     const track = buildTrack(course, 160);
-    for (let i = 0; i < track.samples.length; i += 16) {
+    const fullHalf = course.roadWidth * 0.5 + course.shoulderWidth;
+    for (let i = 0; i < track.samples.length; i += 8) {
       const s = track.samples[i];
-      const gy = groundHeightAt(track, s.pos.x, s.pos.z);
-      assert.ok(Number.isFinite(gy));
-      assert.ok(gy < s.pos.y, `${course.id} terrain beneath centerline sits below asphalt`);
+      for (const lat of [-fullHalf, 0, fullHalf]) {
+        const x = s.pos.x + s.right.x * lat;
+        const z = s.pos.z + s.right.z * lat;
+        const roadY = s.pos.y + Math.sin(s.bankAngle) * lat;
+        const gy = groundHeightAt(track, x, z);
+        assert.ok(Number.isFinite(gy));
+        assert.ok(
+          gy <= roadY - 0.05,
+          `${course.id} sample ${i} lat=${lat.toFixed(1)} terrain (${gy.toFixed(2)}) sits below road (${roadY.toFixed(2)})`,
+        );
+      }
     }
   }
 });
+
+test('no static mountain, mesa, dome, villa, pagoda, or spire intrudes into any circuit corridor', () => {
+  for (const course of COURSE_LIST) {
+    const track = buildTrack(course, 480);
+    const footprints = listCourseLandmarkFootprints(course.id);
+    assert.ok(footprints.length > 0, `${course.id} has static landmarks registered`);
+
+    for (const lm of footprints) {
+      const clearance = computeLandmarkTrackClearance(track, lm.x, lm.z, lm.radius);
+      assert.ok(
+        clearance >= 6,
+        `${course.id} landmark "${lm.id}" at (${lm.x}, ${lm.z}) r=${lm.radius.toFixed(1)}m intrudes on track! clearance=${clearance.toFixed(1)}m`,
+      );
+    }
+  }
+});
+
