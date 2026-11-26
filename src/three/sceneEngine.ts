@@ -203,7 +203,7 @@ export class SolsticeSceneEngine {
       renderer.toneMappingExposure = 0.92;
       renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
       renderer.shadowMap.enabled = !this.isSoftwareGl;
-      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.shadowMap.type = THREE.PCFShadowMap;
 
       const width = Math.max(1, this.container.clientWidth || window.innerWidth);
       const height = Math.max(1, this.container.clientHeight || window.innerHeight);

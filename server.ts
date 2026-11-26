@@ -1,16 +1,15 @@
 import 'dotenv/config';
 import express from 'express';
+import http from 'http';
 import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT) || 3000;
 const IS_PROD = process.env.NODE_ENV === 'production';
+const HMR_DISABLED = process.env.DISABLE_HMR === 'true';
 
 async function createServer() {
   const app = express();
+  const httpServer = http.createServer(app);
   app.use(express.json({ limit: '2mb' }));
 
   app.get('/api/health', (_req, res) => {
@@ -18,7 +17,7 @@ async function createServer() {
   });
 
   if (IS_PROD) {
-    const distPath = path.resolve(__dirname, 'dist');
+    const distPath = path.resolve(import.meta.dirname, 'dist');
     app.use(express.static(distPath));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
@@ -28,14 +27,15 @@ async function createServer() {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: process.env.DISABLE_HMR !== 'true',
+        hmr: HMR_DISABLED ? false : { server: httpServer },
+        watch: HMR_DISABLED ? null : undefined,
       },
       appType: 'spa',
     });
     app.use(vite.middlewares);
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Solstice Circuit server running at http://localhost:${PORT}`);
   });
 }
