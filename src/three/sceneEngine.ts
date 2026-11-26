@@ -95,6 +95,7 @@ export class SolsticeSceneEngine {
   private track: TrackData;
   private world: RaceWorldState;
   private courseEnv: CourseEnvironment | null = null;
+  private loadedEnvCourseId: CourseId | null = null;
   private carRigs = new Map<string, CarMeshRig>();
 
   private audio = new DrivingAudioEngine();
@@ -140,10 +141,10 @@ export class SolsticeSceneEngine {
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(62, 16 / 9, 0.25, 1600);
 
-    this.hemiLight = new THREE.HemisphereLight(0x88bbee, 0x804b2d, 1.0);
+    this.hemiLight = new THREE.HemisphereLight(0x82b4e2, 0x704026, 0.52);
     this.scene.add(this.hemiLight);
 
-    this.sunLight = new THREE.DirectionalLight(0xffdfb0, 2.4);
+    this.sunLight = new THREE.DirectionalLight(0xffd9a0, 1.55);
     this.sunLight.castShadow = !this.isSoftwareGl;
     this.sunLight.shadow.mapSize.set(2048, 2048);
     this.sunLight.shadow.camera.near = 10;
@@ -158,8 +159,8 @@ export class SolsticeSceneEngine {
     this.scene.add(this.sunLight);
     this.scene.add(this.sunLight.target);
 
-    // Subtle opposing 3-point rim light to carve sharp highlights along GT bodywork
-    this.rimLight = new THREE.DirectionalLight(0x9ac8ff, 0.56);
+    // Gentle opposing 3-point rim light for crisp silhouette separation without glare
+    this.rimLight = new THREE.DirectionalLight(0x98bee8, 0.22);
     this.scene.add(this.rimLight);
     this.scene.add(this.rimLight.target);
 
@@ -199,7 +200,7 @@ export class SolsticeSceneEngine {
       });
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.14;
+      renderer.toneMappingExposure = 0.92;
       renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
       renderer.shadowMap.enabled = !this.isSoftwareGl;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -228,17 +229,18 @@ export class SolsticeSceneEngine {
       const pmrem = new THREE.PMREMGenerator(renderer);
       this.envTexture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
       this.scene.environment = this.envTexture;
+      this.scene.environmentIntensity = 0.38;
       pmrem.dispose();
 
-      // Cinematic selective-threshold Bloom + ACES OutputPass on hardware GPUs (zero stall on SwiftShader)
+      // Subtle high-threshold optical bloom on hardware GPUs (only true specular/LED peaks > 1.55 bloom)
       if (!this.isSoftwareGl) {
         const composer = new EffectComposer(renderer);
         composer.addPass(new RenderPass(this.scene, this.camera));
         const bloom = new UnrealBloomPass(
           new THREE.Vector2(Math.floor(width * 0.5), Math.floor(height * 0.5)),
-          0.32,
-          0.52,
-          0.92,
+          0.11,
+          0.35,
+          1.55,
         );
         composer.addPass(bloom);
         composer.addPass(new OutputPass());
@@ -255,11 +257,12 @@ export class SolsticeSceneEngine {
     return this.renderer ? Math.min(8, this.renderer.capabilities.getMaxAnisotropy()) : 1;
   }
 
-  private clearCourseObjects(): void {
-    if (this.courseEnv) {
+  private clearCourseObjects(keepEnv = false): void {
+    if (!keepEnv && this.courseEnv) {
       this.scene.remove(this.courseEnv.group);
       this.courseEnv.dispose();
       this.courseEnv = null;
+      this.loadedEnvCourseId = null;
     }
     for (const rig of this.carRigs.values()) {
       this.scene.remove(rig.root);
@@ -276,55 +279,59 @@ export class SolsticeSceneEngine {
     let fogHex = course.fogColor;
     let fogDensity = course.fogDensity;
     let sunHex = course.sunColor;
-    let sunIntensity = course.sunIntensity;
-    let hemiIntensity = course.hemiIntensity;
-    let auroraStrength = course.hasAurora ? 1.0 : 0.0;
-    let starStrength = course.hasAurora ? 0.75 : 0.0;
-    let headlightIntensity = 1.75;
-    let beamOpacity = course.hasAurora ? 0.34 : 0.14;
-    let bloomStrength = course.hasAurora ? 0.42 : 0.32;
+    let sunIntensity = course.sunIntensity + 0.14;
+    let hemiIntensity = course.hemiIntensity + 0.04;
+    let envIntensity = 0.42;
+    let auroraStrength = course.hasAurora ? 0.85 : 0.0;
+    let starStrength = course.hasAurora ? 0.65 : 0.0;
+    let headlightIntensity = 0.65;
+    let beamOpacity = course.hasAurora ? 0.14 : 0.0;
+    let bloomStrength = course.hasAurora ? 0.14 : 0.1;
 
     _sunDirScratch.set(course.sunPosition.x, course.sunPosition.y, course.sunPosition.z);
 
     if (this.timeOfDay === 'noon') {
-      topHex = '#0d4e94';
-      midHex = '#4b98db';
-      horizonHex = '#d5eefc';
-      fogHex = '#c5e4f5';
+      topHex = '#114a85';
+      midHex = '#488cc2';
+      horizonHex = '#b5d6ea';
+      fogHex = '#a8cce0';
       fogDensity = course.fogDensity * 0.78;
-      sunHex = '#fffaf0';
-      sunIntensity = 2.85;
-      hemiIntensity = 1.18;
+      sunHex = '#fff4e0';
+      sunIntensity = 1.72;
+      hemiIntensity = 0.6;
+      envIntensity = 0.42;
       auroraStrength = 0.0;
       starStrength = 0.0;
-      headlightIntensity = 1.0;
+      headlightIntensity = 0.35;
       beamOpacity = 0.0;
-      bloomStrength = 0.22;
+      bloomStrength = 0.08;
       _sunDirScratch.set(course.sunPosition.x * 0.5, 290, course.sunPosition.z * 0.5);
     } else if (this.timeOfDay === 'twilight') {
-      topHex = '#070f24';
-      midHex = '#1b2f5c';
-      horizonHex = '#6b4978';
-      fogHex = '#2a3554';
-      fogDensity = course.fogDensity * 1.18;
-      sunHex = '#ffae78';
-      sunIntensity = 1.7;
-      hemiIntensity = 0.88;
-      auroraStrength = course.hasAurora ? 1.25 : 0.65;
-      starStrength = 1.0;
-      headlightIntensity = 3.4;
-      beamOpacity = 0.48;
-      bloomStrength = 0.48;
+      topHex = '#070f22';
+      midHex = '#182a50';
+      horizonHex = '#593d66';
+      fogHex = '#242f4a';
+      fogDensity = course.fogDensity * 1.12;
+      sunHex = '#efa06e';
+      sunIntensity = 0.96;
+      hemiIntensity = 0.42;
+      envIntensity = 0.28;
+      auroraStrength = course.hasAurora ? 1.0 : 0.52;
+      starStrength = 0.9;
+      headlightIntensity = 1.15;
+      beamOpacity = 0.18;
+      bloomStrength = 0.16;
       _sunDirScratch.set(course.sunPosition.x, 42, course.sunPosition.z);
     }
 
     this.scene.background = new THREE.Color(fogHex);
     this.scene.fog = new THREE.FogExp2(fogHex, fogDensity);
+    this.scene.environmentIntensity = envIntensity;
     this.sunLight.color.set(sunHex);
     this.sunLight.intensity = sunIntensity;
-    this.rimLight.color.set(this.timeOfDay === 'twilight' ? '#7ec4ff' : '#d6eaff');
-    this.rimLight.intensity = this.timeOfDay === 'twilight' ? 0.72 : 0.52;
-    this.hemiLight.color.set(this.timeOfDay === 'twilight' ? '#7aa4e8' : course.hemiSkyColor);
+    this.rimLight.color.set(this.timeOfDay === 'twilight' ? '#70aadf' : '#c4dcf2');
+    this.rimLight.intensity = this.timeOfDay === 'twilight' ? 0.26 : 0.2;
+    this.hemiLight.color.set(this.timeOfDay === 'twilight' ? '#6b92cc' : course.hemiSkyColor);
     this.hemiLight.groundColor.set(course.hemiGroundColor);
     this.hemiLight.intensity = hemiIntensity;
 
@@ -353,12 +360,15 @@ export class SolsticeSceneEngine {
   }
 
   public loadCourseWorld(courseId: CourseId, mode: GameMode, skipCountdown = false): void {
+    const reuseEnv = this.courseEnv !== null && this.loadedEnvCourseId === courseId;
     this.courseId = courseId;
     this.gameMode = mode;
-    this.clearCourseObjects();
+    this.clearCourseObjects(reuseEnv);
 
     const course = COURSES[courseId];
-    this.track = buildTrack(course);
+    if (!reuseEnv) {
+      this.track = buildTrack(course);
+    }
     this.world = createRaceWorld(
       this.track,
       mode,
@@ -372,10 +382,13 @@ export class SolsticeSceneEngine {
     this.finishDelayTimer = -1;
 
     const maxAniso = this.getMaxAnisotropy();
-    this.courseEnv = buildCourseEnvironment(this.track, maxAniso);
-    this.scene.add(this.courseEnv.group);
+    if (!reuseEnv) {
+      this.courseEnv = buildCourseEnvironment(this.track, maxAniso);
+      this.loadedEnvCourseId = courseId;
+      this.scene.add(this.courseEnv.group);
+    }
 
-    // Spawn composite 22-part 3D cars for player + rivals
+    // Spawn hyper-detailed composite 3D cars for player + rivals
     const rivalNumbers = ['11', '42', '88'];
     const allCars = [this.world.player, ...this.world.rivals];
     allCars.forEach((car, idx) => {
@@ -398,7 +411,7 @@ export class SolsticeSceneEngine {
 
     this.applyAtmosphereLighting();
 
-    if (this.renderer && !this.isSoftwareGl) {
+    if (!reuseEnv && this.renderer && !this.isSoftwareGl) {
       this.renderer.compile(this.scene, this.camera);
     }
 
@@ -408,6 +421,7 @@ export class SolsticeSceneEngine {
     } else {
       this.snapCameraToGameplay();
     }
+    this.lastTimestamp = performance.now();
     this.emitTelemetryNow();
   }
 

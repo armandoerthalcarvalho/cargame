@@ -341,31 +341,50 @@ export function groundHeightAt(track: TrackData, x: number, z: number): number {
     return proj.roadY - 0.16;
   }
 
-  const blend = Math.min(1, (absLat - (halfRoad + 2.0)) / 28);
+  const blend = Math.min(1, (absLat - (halfRoad + 2.0)) / 26);
   const smooth = blend * blend * (3 - 2 * blend);
 
-  const waveA = Math.sin(x * 0.011 + 0.7) * Math.cos(z * 0.01 - 0.4);
-  const waveB = Math.sin(x * 0.029 - z * 0.025) * 0.5;
-  const ridge = Math.abs(Math.sin(x * 0.007 + z * 0.0085));
+  // Layered natural mountain synthesis (broad geological massifs + smooth organic ridge folds, zero sawtooth spikes)
+  const n1 = Math.sin(x * 0.0058 + 0.7) * Math.cos(z * 0.0052 - 0.4);
+  const n2 = Math.sin(x * 0.0135 - z * 0.0118 + 1.3) * 0.48;
+  const n3 = Math.cos(x * 0.029 + z * 0.026 - 0.6) * 0.22;
+  const n4 = Math.sin(x * 0.062 - z * 0.054) * 0.08;
+
+  // Smoothly folded ridges (sqrt(sin^2 + eps) avoids sharp C0 vertex spikes on terrain grid)
+  const s1 = Math.sin(x * 0.0044 + z * 0.0051 + 0.4);
+  const s2 = Math.cos(x * 0.0098 - z * 0.0086 + 1.1);
+  const r1 = 1.0 - Math.sqrt(s1 * s1 + 0.04);
+  const r2 = 1.0 - Math.sqrt(s2 * s2 + 0.05);
+  const smoothRidge = r1 * 0.68 + r2 * 0.32;
+
+  // Far-horizon sweeping mountain range elevation (starts gently beyond 95m)
+  const farDist = Math.max(0, absLat - 95);
+  const horizonBoost = Math.pow(Math.min(farDist / 290, 1.3), 1.32) * 76;
 
   let naturalY = 0;
   if (track.course.id === 'sunstone-canyon') {
-    const mesa = Math.max(0, absLat - 30) * 0.36;
-    naturalY = proj.roadY - 2.0 + waveA * 10 + waveB * 4.5 + mesa * (0.6 + ridge * 0.85);
+    // Broad red-rock canyon walls + stepped sandstone benches + rolling talus hills
+    const rawWall = Math.max(0, absLat - 28) * 0.28 + horizonBoost * 0.74;
+    const rawElev = proj.roadY - 1.6 + n1 * 11 + n2 * 5.2 + n3 * 2.4 + n4 * 1.0 + rawWall * (0.58 + smoothRidge * 0.62);
+    const terrace = Math.floor(rawElev / 8.5) * 8.5 + Math.min(8.5, Math.pow(((rawElev % 8.5) + 8.5) % 8.5 / 8.5, 0.64) * 8.5);
+    naturalY = terrace * 0.34 + rawElev * 0.66;
   } else if (track.course.id === 'sunken-coast') {
     const isSeaSide = proj.lateral > 0;
     if (isSeaSide) {
-      naturalY = -10.5 + waveA * 2.2;
+      naturalY = -10.8 + n1 * 2.0 + n3 * 0.8;
     } else {
-      naturalY = proj.roadY + 3.5 + Math.max(0, absLat - 26) * 0.28 + waveA * 9 + waveB * 4;
+      const cliffRise = Math.max(0, absLat - 24) * 0.28 + horizonBoost * 0.64;
+      naturalY = proj.roadY + 2.4 + cliffRise * (0.62 + smoothRidge * 0.48) + n1 * 10 + n2 * 4.8 + n3 * 2.2;
     }
   } else if (track.course.id === 'sakura-skyway') {
-    // Terraced Japanese mountain slopes with gentle stepped contour shelves
-    const rawSlope = proj.roadY - 1.5 + waveA * 11 + waveB * 3.5 + Math.max(0, absLat - 28) * 0.26 * (0.55 + ridge * 0.7);
-    naturalY = Math.round(rawSlope / 3.2) * 3.2 * 0.35 + rawSlope * 0.65;
+    // Rolling Japanese highland hills rising into stately volcanic peaks
+    const ridgeRise = Math.max(0, absLat - 26) * 0.25 + horizonBoost * 0.82;
+    const rawSlope = proj.roadY - 1.4 + n1 * 12 + n2 * 4.6 + n3 * 2.0 + ridgeRise * (0.54 + smoothRidge * 0.68);
+    naturalY = Math.round(rawSlope / 5.0) * 5.0 * 0.16 + rawSlope * 0.84;
   } else {
-    const peak = Math.max(0, absLat - 24) * 0.48;
-    naturalY = proj.roadY - 1.2 + waveA * 12 + waveB * 5 + peak * (0.7 + ridge * 0.9);
+    // Majestic sculpted alpine glacier massifs
+    const peakRise = Math.max(0, absLat - 24) * 0.38 + horizonBoost * 0.96;
+    naturalY = proj.roadY - 1.2 + n1 * 13 + n2 * 5.8 + n3 * 2.8 + n4 * 1.1 + peakRise * (0.56 + smoothRidge * 0.82);
   }
 
   return (proj.roadY - 0.16) * (1 - smooth) + naturalY * smooth;
