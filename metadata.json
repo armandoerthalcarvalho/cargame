@@ -1,0 +1,6 @@
+{
+  "name": "Solstice Circuit",
+  "description": "Immersive 3D grand touring driving game with three scenic courses, drift-boost physics, AI rivals, and custom soundtrack and livery studios.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
