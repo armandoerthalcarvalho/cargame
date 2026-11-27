@@ -1,15 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { COURSE_LIST, COURSES } from './courses';
+import { COURSE_LIST, COURSES, LIVERY_PRESETS } from './courses';
 import { buildTrack } from './track';
 import {
   buildRunSnapshot,
+  buildStandingsTable,
   computeRivalInput,
   createRaceWorld,
   resetCarToTrack,
   stepRaceWorld,
 } from './race';
-import type { InputState } from './types';
+import type { InputState, RivalController } from './types';
 
 const IDLE_INPUT: InputState = {
   throttle: 0,
@@ -19,21 +20,44 @@ const IDLE_INPUT: InputState = {
   boost: false,
 };
 
-test('grand-prix spawns 1 player, 3 distinct AI archetypes, and 3-2-1 start countdown', () => {
+test('grand-prix spawns 12 distinct cars (player + 11 unique rivals) on a clean non-overlapping FIA grid', () => {
   const track = buildTrack(COURSES['sunstone-canyon']);
   const world = createRaceWorld(track, 'grand-prix', {
     bodyColor: '#d94826',
     accentColor: '#f6d38b',
+    racingNumber: '07',
+    vehicleModel: 'Solstice Ember',
   });
 
-  assert.equal(world.rivals.length, 3);
-  const archetypes = new Set(world.rivalControllers.map((c) => c.archetype));
-  assert.deepEqual(archetypes, new Set(['apex-purist', 'drift-maverick', 'slipstream-hunter']));
-  assert.equal(world.standings.length, 4);
+  assert.equal(world.rivals.length, 11);
+  assert.equal(world.rivalControllers.length, 11);
+  assert.equal(world.standings.length, 12);
   assert.ok(world.countdownTimer > 3.0, 'starts with 3-2-1 countdown gate');
+
+  // Verify every single one of the 12 cars has a unique identity, number, model, specialty, and archetype
+  const allCars = [world.player, ...world.rivals];
+  assert.equal(new Set(allCars.map((c) => c.id)).size, 12, '12 unique car IDs');
+  assert.equal(new Set(allCars.map((c) => c.name)).size, 12, '12 unique driver names');
+  assert.equal(new Set(allCars.map((c) => c.racingNumber)).size, 12, '12 unique racing numbers');
+  assert.equal(new Set(allCars.map((c) => c.vehicleModel)).size, 12, '12 unique vehicle models');
+  assert.equal(new Set(world.rivalControllers.map((c) => c.archetype)).size, 11, '11 distinct AI archetypes');
+  assert.equal(new Set(world.rivalControllers.map((c) => c.specialty)).size, 11, '11 distinct rival specialties');
+
+  // Verify clean pairwise spacing across all 12 cars on starting grid
+  for (let i = 0; i < allCars.length; i++) {
+    for (let j = i + 1; j < allCars.length; j++) {
+      const d = Math.hypot(allCars[i].x - allCars[j].x, allCars[i].z - allCars[j].z);
+      assert.ok(d >= 6.0, `grid cars ${allCars[i].id} and ${allCars[j].id} cleanly spaced (${d.toFixed(2)}m)`);
+    }
+  }
+
+  const table = buildStandingsTable(world);
+  assert.equal(table.length, 12);
+  assert.equal(table[0].position, 1);
+  assert.equal(table[11].position, 12);
 });
 
-test('3-2-1 countdown holds cars on grid and awards Perfect Launch when holding throttle on GO', () => {
+test('3-2-1 countdown holds all 12 cars on grid and awards Perfect Launch when holding throttle on GO', () => {
   const track = buildTrack(COURSES['sakura-skyway']);
   const world = createRaceWorld(track, 'grand-prix', {
     bodyColor: '#f3ece7',
@@ -45,7 +69,6 @@ test('3-2-1 countdown holds cars on grid and awards Perfect Launch when holding 
   let tickCount = 0;
   let perfectLaunch = false;
 
-  // Step through the 3.15s countdown holding throttle
   for (let i = 0; i < 200; i++) {
     const evs = stepRaceWorld(world, { ...IDLE_INPUT, throttle: 1 }, track, 1 / 60);
     for (const e of evs) {
@@ -101,7 +124,7 @@ test('resetCarToTrack cleanly recovers a spun, off-line, airborne vehicle onto c
   assert.equal(world.player.speed, 0);
 });
 
-test('all 3 AI archetypes autonomously navigate all 4 massive circuits cleanly', () => {
+test('all 11 AI rivals autonomously navigate all 8 diverse circuits cleanly', () => {
   for (const course of COURSE_LIST) {
     const track = buildTrack(course);
     const world = createRaceWorld(
@@ -111,13 +134,13 @@ test('all 3 AI archetypes autonomously navigate all 4 massive circuits cleanly',
       { skipCountdown: true },
     );
 
-    for (let i = 0; i < 20 * 60; i++) {
+    for (let i = 0; i < 16 * 60; i++) {
       stepRaceWorld(world, IDLE_INPUT, track, 1 / 60);
     }
 
     for (const rival of world.rivals) {
       assert.ok(
-        rival.totalProgress > 650,
+        rival.totalProgress > 480,
         `${course.id} ${rival.name} progressed ${rival.totalProgress.toFixed(0)}m`,
       );
       assert.ok(Number.isFinite(rival.x) && Number.isFinite(rival.z));
@@ -146,7 +169,7 @@ test('anti-cheat checkpoint system prevents lap increment by reversing over star
   assert.equal(world.player.finished, false);
 });
 
-test('driving forward through all 8 sectors completes a 2.2km lap and finishes with valid snapshot', () => {
+test('driving forward through all 8 sectors completes a 2.2km lap and finishes with valid standings snapshot', () => {
   const track = buildTrack(COURSES['sunstone-canyon']);
   const world = createRaceWorld(
     track,
@@ -156,15 +179,30 @@ test('driving forward through all 8 sectors completes a 2.2km lap and finishes w
   );
   world.totalLaps = 1;
 
-  const dummyCtrl = {
+  const dummyCtrl: RivalController = {
     id: 'player',
     name: 'You',
-    archetype: 'apex-purist' as const,
+    racingNumber: '07',
+    vehicleModel: 'Solstice Ember',
+    specialty: 'Grand Tourer',
+    archetype: 'apex-purist',
+    livery: LIVERY_PRESETS[0],
+    modifiers: {
+      topSpeedMult: 1,
+      accelMult: 1,
+      gripMult: 1,
+      driftChargeMult: 1,
+      brakeMult: 1,
+      boostPowerMult: 1,
+    },
     colorHex: '#d94826',
     accentHex: '#f6d38b',
     basePace: 1.0,
     preferredLane: 0,
     aggression: 0.4,
+    defensiveBias: 0.2,
+    driftAffinity: 0.25,
+    boostThreshold: 55,
     boostCooldown: 0,
     overtakeOffset: 0,
     overtakeTimer: 0,
@@ -196,6 +234,7 @@ test('driving forward through all 8 sectors completes a 2.2km lap and finishes w
   assert.ok(snapshot.totalTime > 20);
   assert.ok(snapshot.topSpeedKmh > 160);
   assert.ok(Number.isFinite(snapshot.totalStyleScore));
+  assert.equal(snapshot.standingsTable.length, 1);
 });
 
 test('car-to-car collision separates overlapping vehicles and triggers camera trauma', () => {

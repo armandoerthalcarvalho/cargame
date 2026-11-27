@@ -97,6 +97,13 @@ export class DrivingAudioEngine {
   private ensureContext(): AudioContext | null {
     if (typeof window === 'undefined') return null;
     if (!this.ctx) {
+      const ua = (
+        typeof navigator !== 'undefined'
+          ? (navigator as Navigator & { userActivation?: { hasBeenActive?: boolean } })
+              .userActivation
+          : undefined
+      );
+      if (ua && !ua.hasBeenActive) return null;
       const AudioCtx =
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;

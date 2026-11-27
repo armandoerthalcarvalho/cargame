@@ -69,11 +69,15 @@ export function createInitialCarState(
   opts: {
     id: string;
     name: string;
+    racingNumber?: string;
+    vehicleModel?: string;
+    specialty?: string;
     isPlayer: boolean;
     colorHex: string;
     accentHex: string;
     startS: number;
     lateralOffset: number;
+    modifiers?: CarState['modifiers'];
   },
 ): CarState {
   const sample = sampleTrackAtDistance(track, opts.startS);
@@ -85,6 +89,9 @@ export function createInitialCarState(
   return {
     id: opts.id,
     name: opts.name,
+    racingNumber: opts.racingNumber ?? '07',
+    vehicleModel: opts.vehicleModel ?? 'Solstice GT',
+    specialty: opts.specialty ?? 'Grand Tourer',
     isPlayer: opts.isPlayer,
     colorHex: opts.colorHex,
     accentHex: opts.accentHex,
@@ -97,6 +104,7 @@ export function createInitialCarState(
     groundY: y,
     airborne: false,
     airtime: 0,
+    modifiers: opts.modifiers,
     heading,
     speed: 0,
     angularVelocity: 0,
@@ -160,6 +168,14 @@ export function stepVehiclePhysics(
 
   const events: PhysicsEvent[] = [];
   const spec = TUNING_SPECS[tuning];
+  const mods = car.modifiers;
+  const topSpeedMult = spec.topSpeedMult * (mods?.topSpeedMult ?? 1);
+  const accelMult = spec.accelMult * (mods?.accelMult ?? 1);
+  const gripMult = spec.driftGripMult * (mods?.gripMult ?? 1);
+  const boostChargeMult = spec.boostChargeMult * (mods?.driftChargeMult ?? 1);
+  const brakeMult = mods?.brakeMult ?? 1;
+  const boostPowerMult = mods?.boostPowerMult ?? 1;
+
   const throttle = Math.max(0, Math.min(1, rawInput.throttle));
   const brake = Math.max(0, Math.min(1, rawInput.brake));
   const steer = Math.max(-1, Math.min(1, rawInput.steer));
@@ -215,7 +231,7 @@ export function stepVehiclePhysics(
   } else if (forwardVel > 24 && car.surface === 'asphalt' && !car.airborne) {
     car.boostEnergy = Math.min(
       100,
-      car.boostEnergy + PHYSICS_CONSTANTS.passiveBoostRegen * spec.boostChargeMult * dt,
+      car.boostEnergy + PHYSICS_CONSTANTS.passiveBoostRegen * boostChargeMult * dt,
     );
   }
 
@@ -227,7 +243,7 @@ export function stepVehiclePhysics(
     car.boostEnergy = Math.min(100, car.boostEnergy + car.slipstreamIntensity * 9 * dt);
   }
 
-  const baseTopSpeed = (boostEffective ? PHYSICS_CONSTANTS.boostMaxSpeed : PHYSICS_CONSTANTS.maxSpeed) * spec.topSpeedMult;
+  const baseTopSpeed = (boostEffective ? PHYSICS_CONSTANTS.boostMaxSpeed : PHYSICS_CONSTANTS.maxSpeed) * topSpeedMult;
   const padBonus = car.padBoostTimer > 0 ? 5.5 : 0;
   const effectiveMaxSpeed = (baseTopSpeed + slipBonus + padBonus) * paceMultiplier;
 
@@ -237,21 +253,21 @@ export function stepVehiclePhysics(
     if (throttle > 0) {
       const speedRatio = Math.max(0, forwardVel) / Math.max(1, effectiveMaxSpeed);
       const torqueCurve = Math.max(0.38, 1.22 - speedRatio * 0.78);
-      longAccel += throttle * PHYSICS_CONSTANTS.engineAccel * spec.accelMult * torqueCurve * paceMultiplier;
+      longAccel += throttle * PHYSICS_CONSTANTS.engineAccel * accelMult * torqueCurve * paceMultiplier;
     }
     if (boostEffective) {
-      longAccel += PHYSICS_CONSTANTS.boostAccel * paceMultiplier;
+      longAccel += PHYSICS_CONSTANTS.boostAccel * boostPowerMult * paceMultiplier;
     }
     if (brake > 0) {
       if (forwardVel > 1.2) {
-        longAccel -= brake * PHYSICS_CONSTANTS.brakeDecel;
+        longAccel -= brake * PHYSICS_CONSTANTS.brakeDecel * brakeMult;
       } else {
         longAccel -= brake * 16;
       }
     }
   } else if (boostEffective) {
     // Mid-air thruster nudge feels awesome off ramps
-    longAccel += PHYSICS_CONSTANTS.boostAccel * 0.35;
+    longAccel += PHYSICS_CONSTANTS.boostAccel * 0.35 * boostPowerMult;
   }
 
   // Aerodynamic + rolling + surface drag
@@ -328,14 +344,14 @@ export function stepVehiclePhysics(
     }
   }
 
-  // Lateral grip damping (modified by tuning class)
+  // Lateral grip damping (modified by tuning class and per-car profile)
   const lateralDamp = car.airborne
     ? 0.55
     : car.isDrifting
-      ? PHYSICS_CONSTANTS.driftLateralDamp * spec.driftGripMult
+      ? PHYSICS_CONSTANTS.driftLateralDamp * gripMult
       : car.surface === 'shoulder'
-        ? PHYSICS_CONSTANTS.gripLateralDamp * 0.65 * spec.driftGripMult
-        : PHYSICS_CONSTANTS.gripLateralDamp * spec.driftGripMult;
+        ? PHYSICS_CONSTANTS.gripLateralDamp * 0.65 * gripMult
+        : PHYSICS_CONSTANTS.gripLateralDamp * gripMult;
   lateralVel *= Math.exp(-lateralDamp * dt);
   lateralVel = Math.max(-24, Math.min(24, lateralVel));
 

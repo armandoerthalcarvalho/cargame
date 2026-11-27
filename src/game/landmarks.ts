@@ -31,14 +31,43 @@ export interface CourseLandmarkSpecs {
   };
   domes?: Array<{ id: string; x: number; z: number; radius: number }>;
   spires?: Array<{ id: string; x: number; z: number; radius: number; height: number }>;
+  windmills?: Array<{ id: string; x: number; z: number; rotY: number; radius: number; height: number }>;
+  obelisks?: Array<{ id: string; x: number; z: number; rotY: number; radius: number; height: number }>;
+  fireTowers?: Array<{ id: string; x: number; z: number; rotY: number; radius: number; height: number }>;
+  basaltMonoliths?: Array<{ id: string; x: number; z: number; radius: number; height: number }>;
+  geothermalTowers?: Array<{ id: string; x: number; z: number; rotY: number; radius: number; height: number }>;
 }
 
 /**
  * Single source of truth for all static world landmark coordinates and ground footprints.
  * Shared between the Three.js environment builder and automated unit tests so no mountain,
- * mesa, dome, pagoda, or spire can ever overlap any circuit corridor.
+ * mesa, dome, pagoda, windmill, obelisk, tower, or basalt monolith can ever overlap a road corridor.
  */
 export const COURSE_LANDMARKS: Record<CourseId, CourseLandmarkSpecs> = {
+  'emerald-oval': {
+    windmills: [
+      { id: 'windmill-1', x: 138, z: 18, rotY: 0.45, radius: 11, height: 24 },
+      { id: 'windmill-2', x: 382, z: 75, rotY: -0.7, radius: 11, height: 26 },
+      { id: 'windmill-3', x: -102, z: 68, rotY: 0.9, radius: 11, height: 23 },
+    ],
+    villas: [
+      { id: 'farm-1', x: 132, z: -115, rotY: 0.3, radius: 10 },
+      { id: 'farm-2', x: -95, z: -145, rotY: -0.5, radius: 10 },
+      { id: 'farm-3', x: 350, z: -175, rotY: 0.8, radius: 10 },
+    ],
+  },
+  'amber-dunes': {
+    obelisks: [
+      { id: 'obelisk-1', x: 150, z: 22, rotY: 0.2, radius: 12, height: 42 },
+      { id: 'obelisk-2', x: 458, z: 58, rotY: -0.5, radius: 14, height: 48 },
+      { id: 'obelisk-3', x: -118, z: 45, rotY: 0.7, radius: 12, height: 38 },
+      { id: 'obelisk-4', x: 165, z: -145, rotY: 1.1, radius: 13, height: 44 },
+    ],
+    mesas: [
+      { id: 'dune-butte-1', x: 475, z: -260, radius: 34, height: 50 },
+      { id: 'dune-butte-2', x: -165, z: 245, radius: 38, height: 56 },
+    ],
+  },
   'sunstone-canyon': {
     mesas: [
       { id: 'mesa-1', x: 112, z: 86, radius: 32, height: 52 },
@@ -62,7 +91,6 @@ export const COURSE_LANDMARKS: Record<CourseId, CourseLandmarkSpecs> = {
   },
   'sakura-skyway': {
     pagoda: { id: 'sakura-pagoda', x: 118, z: 148, radius: 11 },
-    // Positioned majestically on the northern alpine horizon (>140m beyond nearest road edge!)
     mountain: {
       id: 'mount-solstice',
       x: 230,
@@ -93,6 +121,42 @@ export const COURSE_LANDMARKS: Record<CourseId, CourseLandmarkSpecs> = {
       { id: 'spire-6', x: -95, z: 220, radius: 12, height: 38 },
     ],
   },
+  'redwood-switchbacks': {
+    fireTowers: [
+      { id: 'lookout-1', x: 210, z: 145, rotY: 0.3, radius: 10, height: 28 },
+      { id: 'lookout-2', x: 305, z: -145, rotY: -0.6, radius: 10, height: 30 },
+      { id: 'lookout-3', x: -112, z: 115, rotY: 0.9, radius: 10, height: 26 },
+      { id: 'lookout-4', x: 660, z: 60, rotY: 1.4, radius: 10, height: 32 },
+    ],
+    mountain: {
+      id: 'mount-sequoia',
+      x: 295,
+      z: 775,
+      baseRadius: 205,
+      baseHeight: 168,
+      spurOffsetX: 125,
+      spurOffsetZ: -20,
+      spurRadius: 118,
+      spurHeight: 110,
+      snowRadius: 72,
+      snowHeight: 54,
+    },
+  },
+  'obsidian-caldera': {
+    basaltMonoliths: [
+      { id: 'basalt-1', x: 215, z: 155, radius: 22, height: 58 },
+      { id: 'basalt-2', x: 355, z: -155, radius: 24, height: 64 },
+      { id: 'basalt-3', x: -135, z: 65, radius: 22, height: 52 },
+      { id: 'basalt-4', x: 755, z: 115, radius: 26, height: 68 },
+      { id: 'basalt-5', x: 340, z: 640, radius: 28, height: 74 },
+      { id: 'basalt-6', x: 335, z: -610, radius: 25, height: 62 },
+    ],
+    geothermalTowers: [
+      { id: 'geo-1', x: 180, z: -130, rotY: 0.4, radius: 14, height: 26 },
+      { id: 'geo-2', x: 385, z: 255, rotY: -0.7, radius: 14, height: 28 },
+      { id: 'geo-3', x: 465, z: -265, rotY: 0.9, radius: 14, height: 26 },
+    ],
+  },
 };
 
 export function listCourseLandmarkFootprints(courseId: CourseId): StaticLandmarkFootprint[] {
@@ -100,7 +164,6 @@ export function listCourseLandmarkFootprints(courseId: CourseId): StaticLandmark
   const out: StaticLandmarkFootprint[] = [];
   if (spec.mesas) {
     for (const m of spec.mesas) {
-      // Talus skirt base is radius * 1.32 with crag noise up to 1.12x
       out.push({ id: m.id, x: m.x, z: m.z, radius: m.radius * 1.45, height: m.height });
     }
   }
@@ -134,6 +197,31 @@ export function listCourseLandmarkFootprints(courseId: CourseId): StaticLandmark
   if (spec.spires) {
     for (const s of spec.spires) {
       out.push({ id: s.id, x: s.x, z: s.z, radius: s.radius * 1.5, height: s.height });
+    }
+  }
+  if (spec.windmills) {
+    for (const w of spec.windmills) {
+      out.push({ id: w.id, x: w.x, z: w.z, radius: w.radius * 1.2, height: w.height, rotY: w.rotY });
+    }
+  }
+  if (spec.obelisks) {
+    for (const o of spec.obelisks) {
+      out.push({ id: o.id, x: o.x, z: o.z, radius: o.radius * 1.35, height: o.height, rotY: o.rotY });
+    }
+  }
+  if (spec.fireTowers) {
+    for (const f of spec.fireTowers) {
+      out.push({ id: f.id, x: f.x, z: f.z, radius: f.radius * 1.25, height: f.height, rotY: f.rotY });
+    }
+  }
+  if (spec.basaltMonoliths) {
+    for (const b of spec.basaltMonoliths) {
+      out.push({ id: b.id, x: b.x, z: b.z, radius: b.radius * 1.4, height: b.height });
+    }
+  }
+  if (spec.geothermalTowers) {
+    for (const g of spec.geothermalTowers) {
+      out.push({ id: g.id, x: g.x, z: g.z, radius: g.radius * 1.25, height: g.height, rotY: g.rotY });
     }
   }
   return out;

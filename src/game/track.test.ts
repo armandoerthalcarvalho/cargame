@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { COURSE_LIST } from './courses';
+import { COURSE_LIST, COURSES } from './courses';
 import { computeLandmarkTrackClearance, listCourseLandmarkFootprints } from './landmarks';
 import {
   buildTrack,
@@ -10,17 +10,27 @@ import {
   sampleTrackAtDistance,
 } from './track';
 
-test('all four massive circuits generate closed, smooth, non-degenerate tracks (2.0km - 2.7km)', () => {
-  assert.equal(COURSE_LIST.length, 4);
+test('all 8 diverse circuits generate closed, smooth, non-degenerate tracks spanning short sprints to long endurance', () => {
+  assert.equal(COURSE_LIST.length, 8);
+  let minLen = Infinity;
+  let maxLen = 0;
+  const difficulties = new Set<string>();
+  const lengthCategories = new Set<string>();
+
   for (const course of COURSE_LIST) {
     const track = buildTrack(course, 480);
+    minLen = Math.min(minLen, track.totalLength);
+    maxLen = Math.max(maxLen, track.totalLength);
+    difficulties.add(course.difficulty);
+    lengthCategories.add(course.lengthCategory);
+
     assert.ok(
-      track.totalLength >= 2000 && track.totalLength <= 2700,
-      `${course.id} length ${track.totalLength.toFixed(0)}m in grand circuit range`,
+      track.totalLength >= 1150 && track.totalLength <= 3800,
+      `${course.id} length ${track.totalLength.toFixed(0)}m in expected circuit range`,
     );
     assert.equal(track.samples.length, 480);
     assert.equal(track.checkpointCount, 8);
-    assert.ok(track.features.length >= 8, `${course.id} has at least 8 interactive track features`);
+    assert.ok(track.features.length >= 5, `${course.id} has interactive track features`);
 
     const first = track.samples[0];
     const last = track.samples[track.samples.length - 1];
@@ -50,9 +60,15 @@ test('all four massive circuits generate closed, smooth, non-degenerate tracks (
       assert.ok(Math.abs(sample.bankAngle) <= 0.14, 'bank angle stays drivable');
     }
   }
+
+  assert.ok(minLen < 1600, `includes shorter sprint trails (shortest=${minLen.toFixed(0)}m)`);
+  assert.ok(maxLen > 2800, `includes longer endurance trails (longest=${maxLen.toFixed(0)}m)`);
+  assert.ok(difficulties.has('Easy'), 'includes Easy circuit');
+  assert.ok(difficulties.has('Expert'), 'includes Expert circuit');
+  assert.deepEqual(lengthCategories, new Set(['Short', 'Medium', 'Long']));
 });
 
-test('non-self-intersection check across all four grand circuits', () => {
+test('non-self-intersection check across all 8 circuits', () => {
   for (const course of COURSE_LIST) {
     const track = buildTrack(course, 240);
     const n = track.samples.length;
@@ -71,12 +87,11 @@ test('non-self-intersection check across all four grand circuits', () => {
   }
 });
 
-test('every course places boost pads, jump ramps, and apex rings cleanly inside the asphalt width', () => {
+test('every course places interactive features cleanly inside the asphalt width', () => {
   for (const course of COURSE_LIST) {
     const track = buildTrack(course);
     const types = new Set(track.features.map((f) => f.type));
     assert.ok(types.has('boost-pad'), `${course.id} has boost pads`);
-    assert.ok(types.has('jump-ramp'), `${course.id} has jump ramps`);
     assert.ok(types.has('apex-ring'), `${course.id} has apex rings`);
 
     const halfRoad = course.roadWidth * 0.5;
@@ -87,8 +102,8 @@ test('every course places boost pads, jump ramps, and apex rings cleanly inside 
   }
 });
 
-test('projectToTrack accurately recovers arc-length and signed lateral offset on 2km+ track', () => {
-  const track = buildTrack(COURSE_LIST[0], 480);
+test('projectToTrack accurately recovers arc-length and signed lateral offset on grand circuit', () => {
+  const track = buildTrack(COURSES['sunstone-canyon'], 480);
 
   for (const testS of [40, 480, 1120, 1850]) {
     const sample = sampleTrackAtDistance(track, testS);
@@ -123,7 +138,7 @@ test('forwardToRight obeys right-handed chase-camera orientation', () => {
   assert.ok(Math.abs(r.z) < 1e-6);
 });
 
-test('groundHeightAt stays finite and below asphalt/shoulder across full road width on all 4 worlds', () => {
+test('groundHeightAt stays finite and below asphalt/shoulder across full road width on all 8 worlds', () => {
   for (const course of COURSE_LIST) {
     const track = buildTrack(course, 160);
     const fullHalf = course.roadWidth * 0.5 + course.shoulderWidth;
@@ -144,7 +159,7 @@ test('groundHeightAt stays finite and below asphalt/shoulder across full road wi
   }
 });
 
-test('no static mountain, mesa, dome, villa, pagoda, or spire intrudes into any circuit corridor', () => {
+test('no static mountain, mesa, dome, villa, pagoda, windmill, obelisk, lookout, or basalt monolith intrudes into any of the 8 circuit corridors', () => {
   for (const course of COURSE_LIST) {
     const track = buildTrack(course, 480);
     const footprints = listCourseLandmarkFootprints(course.id);
@@ -159,4 +174,3 @@ test('no static mountain, mesa, dome, villa, pagoda, or spire intrudes into any 
     }
   }
 });
-

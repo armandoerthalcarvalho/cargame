@@ -1,20 +1,10 @@
-export type CourseId =
-  | 'sunstone-canyon'
-  | 'sunken-coast'
-  | 'glacier-observatory'
-  | 'sakura-skyway';
+export type GamePhase = 'title' | 'playing' | 'paused' | 'gameover';
 
 export type GameMode = 'grand-prix' | 'time-trial' | 'free-roam';
-
-export type GamePhase = 'title' | 'playing' | 'paused' | 'gameover';
 
 export type CameraMode = 'chase' | 'hood' | 'helo';
 
 export type TimeOfDay = 'golden' | 'noon' | 'twilight';
-
-export type SurfaceType = 'asphalt' | 'curb' | 'shoulder';
-
-export type RivalArchetype = 'apex-purist' | 'drift-maverick' | 'slipstream-hunter';
 
 export type PaintFinish = 'gloss' | 'metallic' | 'matte';
 
@@ -23,6 +13,55 @@ export type RimFinish = 'alloy' | 'gold' | 'obsidian' | 'copper';
 export type TuningClass = 'balanced' | 'drift' | 'aero';
 
 export type RadioStationId = 'solstice' | 'coastal' | 'velocity' | 'off';
+
+export type SurfaceType = 'asphalt' | 'curb' | 'shoulder';
+
+export type CourseId =
+  | 'emerald-oval'
+  | 'amber-dunes'
+  | 'sunstone-canyon'
+  | 'sunken-coast'
+  | 'sakura-skyway'
+  | 'glacier-observatory'
+  | 'redwood-switchbacks'
+  | 'obsidian-caldera';
+
+export type CourseDifficulty = 'Easy' | 'Flowing' | 'Balanced' | 'High Speed' | 'Technical' | 'Expert';
+
+export type CourseLengthCategory = 'Short' | 'Medium' | 'Long';
+
+export type TreeStyle =
+  | 'juniper'
+  | 'cypress'
+  | 'pine'
+  | 'sakura'
+  | 'oak'
+  | 'palm'
+  | 'sequoia'
+  | 'birch';
+
+export type LandmarkStyle =
+  | 'canyon-arch'
+  | 'limestone-viaduct'
+  | 'observatory-dome'
+  | 'sakura-torii'
+  | 'meadow-windmill'
+  | 'desert-obelisk'
+  | 'redwood-viaduct'
+  | 'basalt-caldera';
+
+export type RivalArchetype =
+  | 'apex-purist'
+  | 'drift-maverick'
+  | 'slipstream-hunter'
+  | 'aero-demon'
+  | 'launch-rocket'
+  | 'late-braker'
+  | 'canyon-daredevil'
+  | 'endurance-metronome'
+  | 'defensive-guard'
+  | 'boost-sprinter'
+  | 'alpine-climber';
 
 export interface Vec3 {
   x: number;
@@ -36,16 +75,20 @@ export interface ControlPoint {
   z: number;
 }
 
+export type TrackFeatureType = 'boost-pad' | 'jump-ramp' | 'apex-ring';
+
 export interface TrackFeatureSpec {
   id: string;
-  type: 'boost-pad' | 'jump-ramp' | 'apex-ring';
-  t: number; // normalized spline fraction 0..1
-  lateral: number; // meters from centerline
+  type: TrackFeatureType;
+  /** Normalized loop position [0, 1) */
+  t: number;
+  /** Lateral offset from centerline in meters */
+  lateral: number;
 }
 
 export interface TrackFeatureInstance {
   id: string;
-  type: 'boost-pad' | 'jump-ramp' | 'apex-ring';
+  type: TrackFeatureType;
   s: number;
   lateral: number;
   pos: Vec3;
@@ -54,12 +97,33 @@ export interface TrackFeatureInstance {
   radius: number;
 }
 
+export interface TrackSample {
+  index: number;
+  s: number;
+  t: number;
+  pos: Vec3;
+  tangent: Vec3;
+  right: Vec3;
+  curvature: number;
+  bankAngle: number;
+}
+
+export interface TrackProjection {
+  s: number;
+  lateral: number;
+  sampleIndex: number;
+  sample: TrackSample;
+  distanceSq: number;
+  roadY: number;
+}
+
 export interface CourseTheme {
   id: CourseId;
   name: string;
   region: string;
   tagline: string;
-  difficulty: 'Balanced' | 'Technical' | 'High Speed' | 'Flowing';
+  difficulty: CourseDifficulty;
+  lengthCategory: CourseLengthCategory;
   roadWidth: number;
   shoulderWidth: number;
   totalLaps: number;
@@ -86,45 +150,63 @@ export interface CourseTheme {
   waterDeepColor: string;
   hasAurora: boolean;
   ambientParticleColor: number;
-  treeStyle: 'juniper' | 'cypress' | 'pine' | 'sakura';
-  landmarkStyle: 'canyon-arch' | 'limestone-viaduct' | 'observatory-dome' | 'sakura-torii';
+  treeStyle: TreeStyle;
+  landmarkStyle: LandmarkStyle;
   controlPoints: ControlPoint[];
   features: TrackFeatureSpec[];
-}
-
-export interface TrackSample {
-  index: number;
-  s: number;
-  t: number;
-  pos: Vec3;
-  tangent: Vec3;
-  right: Vec3;
-  curvature: number;
-  bankAngle: number;
-}
-
-export interface TrackProjection {
-  s: number;
-  lateral: number;
-  sampleIndex: number;
-  sample: TrackSample;
-  distanceSq: number;
-  roadY: number;
 }
 
 export interface InputState {
   throttle: number; // 0..1
   brake: number; // 0..1
-  steer: number; // -1 (right) to +1 (left)
+  steer: number; // -1 (right) .. +1 (left)
   drift: boolean;
   boost: boolean;
+}
+
+export interface LiveryConfig {
+  id: string;
+  name: string;
+  bodyColor: string;
+  accentColor: string;
+  stripeStyle: 'twin' | 'chevron' | 'horizon' | 'split' | 'carbon';
+  paintFinish: PaintFinish;
+  rimFinish: RimFinish;
+  racingNumber: string;
+  tuning: TuningClass;
+}
+
+export interface VehicleModifiers {
+  topSpeedMult: number;
+  accelMult: number;
+  gripMult: number;
+  driftChargeMult: number;
+  brakeMult: number;
+  boostPowerMult: number;
+}
+
+export interface RivalProfile {
+  id: string;
+  name: string;
+  vehicleModel: string;
+  specialty: string;
+  strengthNote: string;
+  archetype: RivalArchetype;
+  livery: LiveryConfig;
+  modifiers: VehicleModifiers;
+  basePace: number;
+  preferredLane: number;
+  aggression: number;
+  defensiveBias: number;
+  driftAffinity: number;
+  boostThreshold: number;
 }
 
 export interface PhysicsEvent {
   type:
     | 'barrier-hit'
-    | 'boost-ignite'
     | 'drift-bank'
+    | 'boost-ignite'
     | 'boost-pad'
     | 'jump-launch'
     | 'jump-land'
@@ -134,9 +216,36 @@ export interface PhysicsEvent {
   label?: string;
 }
 
+export interface RaceEvent {
+  type:
+    | 'countdown-tick'
+    | 'perfect-launch'
+    | 'checkpoint'
+    | 'lap-complete'
+    | 'race-finish'
+    | 'barrier-hit'
+    | 'car-bump'
+    | 'post-hit'
+    | 'drift-bank'
+    | 'boost-ignite'
+    | 'boost-pad'
+    | 'jump-launch'
+    | 'jump-land'
+    | 'apex-ring';
+  intensity: number;
+  points?: number;
+  label?: string;
+  x?: number;
+  y?: number;
+  z?: number;
+}
+
 export interface CarState {
   id: string;
   name: string;
+  racingNumber: string;
+  vehicleModel: string;
+  specialty: string;
   isPlayer: boolean;
   colorHex: string;
   accentHex: string;
@@ -149,8 +258,9 @@ export interface CarState {
   groundY: number;
   airborne: boolean;
   airtime: number;
-  heading: number; // radians, forward = (sin(h), 0, cos(h))
-  speed: number; // signed m/s along heading
+  /** Yaw in radians: 0 points along +Z, +PI/2 points along +X */
+  heading: number;
+  speed: number;
   angularVelocity: number;
   steerAngle: number;
   wheelSpin: number;
@@ -165,19 +275,18 @@ export interface CarState {
   isBoosting: boolean;
   padBoostTimer: number;
   slipstreamIntensity: number; // 0..1
-  gear: number; // 1..6 (0 for R)
+  gear: number;
   rpm: number; // 0..1
-  pitch: number; // visual body pitch
-  roll: number; // visual body roll
+  pitch: number;
+  roll: number;
   suspensionBounce: number;
   surface: SurfaceType;
   hitFlashTimer: number;
   featureCooldowns: Record<string, number>;
-  // Track & race progress
   trackIndex: number;
-  trackS: number;
+  trackS: number; // distance along track loop [0, totalLength)
   lateralOffset: number;
-  lap: number; // 1-based current lap
+  lap: number; // 1-indexed
   checkpointMask: number;
   lastCheckpointIndex: number;
   totalProgress: number;
@@ -187,17 +296,26 @@ export interface CarState {
   lapStartTime: number;
   bestLapTime: number | null;
   lastLapTime: number | null;
+  modifiers?: VehicleModifiers;
 }
 
 export interface RivalController {
   id: string;
   name: string;
+  racingNumber: string;
+  vehicleModel: string;
+  specialty: string;
   archetype: RivalArchetype;
+  livery: LiveryConfig;
+  modifiers: VehicleModifiers;
   colorHex: string;
   accentHex: string;
   basePace: number;
   preferredLane: number;
   aggression: number;
+  defensiveBias: number;
+  driftAffinity: number;
+  boostThreshold: number;
   boostCooldown: number;
   overtakeOffset: number;
   overtakeTimer: number;
@@ -226,37 +344,13 @@ export interface RoadsidePostState {
   hitCooldown: number;
 }
 
-export interface RaceEvent {
-  type:
-    | 'checkpoint'
-    | 'lap-complete'
-    | 'race-finish'
-    | 'car-bump'
-    | 'barrier-hit'
-    | 'post-hit'
-    | 'boost-ignite'
-    | 'drift-bank'
-    | 'boost-pad'
-    | 'jump-launch'
-    | 'jump-land'
-    | 'apex-ring'
-    | 'countdown-tick'
-    | 'perfect-launch';
-  intensity: number;
-  label?: string;
-  points?: number;
-  x?: number;
-  y?: number;
-  z?: number;
-}
-
 export interface RaceWorldState {
   courseId: CourseId;
   mode: GameMode;
   tuning: TuningClass;
   totalLaps: number;
   elapsedTime: number;
-  countdownTimer: number; // > 0 during 3..2..1 start lights
+  countdownTimer: number;
   lastCountdownDigit: number;
   launchChecked: boolean;
   hitstopTimer: number;
@@ -267,9 +361,33 @@ export interface RaceWorldState {
   posts: RoadsidePostState[];
   standings: string[];
   bannerText: string | null;
-  bannerTone: 'amber' | 'cyan' | 'emerald' | 'red';
+  bannerTone: 'amber' | 'emerald' | 'cyan' | 'rose';
   bannerTimer: number;
   events: RaceEvent[];
+}
+
+export interface MinimapRacer {
+  id: string;
+  x: number;
+  z: number;
+  heading: number;
+  isPlayer: boolean;
+  colorHex: string;
+}
+
+export interface StandingsEntry {
+  position: number;
+  id: string;
+  name: string;
+  racingNumber: string;
+  vehicleModel: string;
+  specialty: string;
+  colorHex: string;
+  accentHex: string;
+  isPlayer: boolean;
+  finished: boolean;
+  finishTime: number | null;
+  gapMeters: number;
 }
 
 export interface HudTelemetry {
@@ -293,20 +411,14 @@ export interface HudTelemetry {
   elapsedTime: number;
   currentLapTime: number;
   bestLapTime: number | null;
-  countdownDigit: number; // 3, 2, 1, or 0
+  countdownDigit: number;
   wrongWay: boolean;
   bannerText: string | null;
-  bannerTone: 'amber' | 'cyan' | 'emerald' | 'red';
+  bannerTone: 'amber' | 'emerald' | 'cyan' | 'rose';
   cameraMode: CameraMode;
   mode: GameMode;
-  minimapRacers: Array<{
-    id: string;
-    x: number;
-    z: number;
-    heading: number;
-    isPlayer: boolean;
-    colorHex: string;
-  }>;
+  minimapRacers: MinimapRacer[];
+  standingsTable: StandingsEntry[];
 }
 
 export interface RunSnapshot {
@@ -320,16 +432,5 @@ export interface RunSnapshot {
   totalStyleScore: number;
   topSpeedKmh: number;
   isVictory: boolean;
-}
-
-export interface LiveryConfig {
-  id: string;
-  name: string;
-  bodyColor: string;
-  accentColor: string;
-  stripeStyle: 'twin' | 'chevron' | 'horizon' | 'split' | 'carbon';
-  paintFinish: PaintFinish;
-  rimFinish: RimFinish;
-  racingNumber: string;
-  tuning: TuningClass;
+  standingsTable: StandingsEntry[];
 }

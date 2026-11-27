@@ -456,12 +456,20 @@ function createTerrainMesh(
         ? 0x7c7464
         : track.course.id === 'sakura-skyway'
           ? 0x3f454f
-          : 0x2e3e52,
+          : track.course.id === 'emerald-oval'
+            ? 0x5c6654
+            : track.course.id === 'amber-dunes'
+              ? 0x8f5f35
+              : track.course.id === 'redwood-switchbacks'
+                ? 0x3d423e
+                : track.course.id === 'obsidian-caldera'
+                  ? 0x1d2128
+                  : 0x2e3e52,
   );
   const cPeakSnow = new THREE.Color(
     track.course.id === 'glacier-observatory'
       ? 0xdce6f0
-      : track.course.id === 'sakura-skyway'
+      : track.course.id === 'sakura-skyway' || track.course.id === 'redwood-switchbacks'
         ? 0xcbd4df
         : track.course.terrainHigh,
   );
@@ -484,8 +492,13 @@ function createTerrainMesh(
       tmpColor.lerp(cCliff, steepness * 0.82);
     }
 
-    // Subtle snow dusting on high mountain crests (Glacier & tall Sakura peaks)
-    if (y > 46 && (track.course.id === 'glacier-observatory' || track.course.id === 'sakura-skyway')) {
+    // Subtle snow dusting on high mountain crests (Glacier, Sakura, Redwood high peaks)
+    if (
+      y > 46 &&
+      (track.course.id === 'glacier-observatory' ||
+        track.course.id === 'sakura-skyway' ||
+        track.course.id === 'redwood-switchbacks')
+    ) {
       const snowBlend = Math.min(1, (y - 46) / 34) * Math.max(0, (ny - 0.55) / 0.45);
       tmpColor.lerp(cPeakSnow, snowBlend * 0.82);
     }
@@ -660,7 +673,7 @@ function buildStartingGantry(
   gridMesh.position.y = 0.055;
   gantry.add(gridMesh);
 
-  // Painted white staggered starting grid slot brackets (P1-P4) behind the start line
+  // Painted white staggered FIA 12-car starting grid slot brackets (P1-P12) behind the start line
   const slotMat = new THREE.MeshStandardMaterial({
     color: 0xd8d4ca,
     roughness: 0.88,
@@ -673,13 +686,9 @@ function buildStartingGantry(
   const barSideGeo = new THREE.PlaneGeometry(0.22, 1.4);
   barSideGeo.rotateX(-Math.PI / 2);
 
-  const gridSlots: Array<[number, number]> = [
-    [-3.2, -10],
-    [3.2, -17],
-    [-3.2, -24],
-    [3.2, -31],
-  ];
-  for (const [gx, gz] of gridSlots) {
+  for (let slotIdx = 0; slotIdx < 12; slotIdx++) {
+    const gx = slotIdx % 2 === 0 ? 2.65 : -2.65;
+    const gz = -5.6 - slotIdx * 7.0;
     const fBar = new THREE.Mesh(barFrontGeo, slotMat);
     fBar.position.set(gx, 0.052, gz);
     gantry.add(fBar);
@@ -2250,7 +2259,7 @@ function buildWorldLandmarks(
       mountain.add(mSnow);
       group.add(mountain);
     }
-  } else {
+  } else if (style === 'observatory-dome') {
     // Glacier Observatory: Paneled brushed-aluminum astronomical domes + telemetry dishes + crystalline ice crags
     const domeWhite = new THREE.MeshStandardMaterial({ color: 0xc5d0dc, roughness: 0.38, metalness: 0.52 });
     const brassMat = new THREE.MeshStandardMaterial({ color: 0xc29542, roughness: 0.28, metalness: 0.85 });
@@ -2324,6 +2333,279 @@ function buildWorldLandmarks(
       sub.rotation.set(-0.1, sp.x * 0.2, 0.14);
       cluster.add(sub);
       group.add(cluster);
+    }
+  } else if (style === 'meadow-windmill') {
+    const stoneMat = new THREE.MeshStandardMaterial({
+      color: 0xd9d2c5,
+      bumpMap: terrainBump,
+      bumpScale: 0.36,
+      roughness: 0.9,
+    });
+    const timberMat = new THREE.MeshStandardMaterial({ color: 0x5c3d28, roughness: 0.84 });
+    const sailMat = new THREE.MeshStandardMaterial({ color: 0xf1ece2, roughness: 0.78 });
+    const roofMat = new THREE.MeshStandardMaterial({ color: 0x8f3f2b, roughness: 0.8 });
+
+    const windmills = COURSE_LANDMARKS[track.course.id].windmills ?? [];
+    for (const w of windmills) {
+      if (computeLandmarkTrackClearance(track, w.x, w.z, w.radius * 1.2) < 4) continue;
+      const gy = groundHeightAt(track, w.x, w.z);
+      const mill = new THREE.Group();
+      mill.position.set(w.x, gy - 1.5, w.z);
+      mill.rotation.y = w.rotY;
+
+      const tower = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 5.2, w.height, 12), stoneMat);
+      tower.position.y = w.height * 0.5;
+      mill.add(tower);
+
+      const cap = new THREE.Mesh(new THREE.ConeGeometry(3.7, 5.2, 12), timberMat);
+      cap.position.y = w.height + 2.4;
+      mill.add(cap);
+
+      // 4-blade timber-and-canvas windmill sail hub
+      const hub = new THREE.Group();
+      hub.position.set(0, w.height - 2.4, 3.8);
+      hub.rotation.z = 0.42;
+      const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 1.4, 10), timberMat);
+      axle.rotation.x = Math.PI / 2;
+      hub.add(axle);
+
+      for (let b = 0; b < 4; b++) {
+        const arm = new THREE.Group();
+        arm.rotation.z = (b * Math.PI) / 2;
+        const spar = new THREE.Mesh(new THREE.BoxGeometry(0.35, 10.5, 0.25), timberMat);
+        spar.position.y = 5.4;
+        arm.add(spar);
+        const canvas = new THREE.Mesh(new THREE.BoxGeometry(1.9, 8.2, 0.08), sailMat);
+        canvas.position.set(0.95, 6.2, 0.06);
+        arm.add(canvas);
+        hub.add(arm);
+      }
+      mill.add(hub);
+      group.add(mill);
+    }
+
+    const farms = COURSE_LANDMARKS[track.course.id].villas ?? [];
+    for (const f of farms) {
+      if (computeLandmarkTrackClearance(track, f.x, f.z, f.radius) < 4) continue;
+      const gy = groundHeightAt(track, f.x, f.z);
+      const barn = new THREE.Group();
+      barn.position.set(f.x, gy - 1.2, f.z);
+      barn.rotation.y = f.rotY;
+      const body = new THREE.Mesh(new THREE.BoxGeometry(11, 6.4, 8), stoneMat);
+      body.position.y = 3.2;
+      barn.add(body);
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(7.8, 3.8, 4), roofMat);
+      roof.position.y = 8.2;
+      roof.rotation.y = Math.PI / 4;
+      barn.add(roof);
+      group.add(barn);
+    }
+  } else if (style === 'desert-obelisk') {
+    const sandRockMat = new THREE.MeshStandardMaterial({
+      color: 0xc28a52,
+      bumpMap: terrainBump,
+      bumpScale: 0.6,
+      roughness: 0.9,
+    });
+    const brassCapMat = new THREE.MeshStandardMaterial({
+      color: 0xd4a44a,
+      metalness: 0.82,
+      roughness: 0.28,
+    });
+
+    const obelisks = COURSE_LANDMARKS[track.course.id].obelisks ?? [];
+    for (const o of obelisks) {
+      if (computeLandmarkTrackClearance(track, o.x, o.z, o.radius * 1.35) < 4) continue;
+      const gy = groundHeightAt(track, o.x, o.z);
+      const grp = new THREE.Group();
+      grp.position.set(o.x, gy - 2.5, o.z);
+      grp.rotation.y = o.rotY;
+
+      const plinth = new THREE.Mesh(new THREE.BoxGeometry(8.5, 4.5, 8.5), sandRockMat);
+      plinth.position.y = 2.2;
+      grp.add(plinth);
+
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 3.8, o.height, 4), sandRockMat);
+      shaft.position.y = 4.2 + o.height * 0.5;
+      shaft.rotation.y = Math.PI / 4;
+      grp.add(shaft);
+
+      const pyramidion = new THREE.Mesh(new THREE.ConeGeometry(1.9, 4.4, 4), brassCapMat);
+      pyramidion.position.y = 4.2 + o.height + 2.1;
+      pyramidion.rotation.y = Math.PI / 4;
+      grp.add(pyramidion);
+      group.add(grp);
+    }
+
+    const buttes = COURSE_LANDMARKS[track.course.id].mesas ?? [];
+    for (const m of buttes) {
+      if (computeLandmarkTrackClearance(track, m.x, m.z, m.radius * 1.45) < 4) continue;
+      const gy = groundHeightAt(track, m.x, m.z);
+      const mesa = new THREE.Mesh(
+        new THREE.CylinderGeometry(m.radius * 0.68, m.radius * 1.28, m.height, 12),
+        sandRockMat,
+      );
+      mesa.position.set(m.x, gy + m.height * 0.42 - 4, m.z);
+      group.add(mesa);
+    }
+  } else if (style === 'redwood-viaduct') {
+    const redwoodMat = new THREE.MeshStandardMaterial({
+      color: 0x5a3424,
+      bumpMap: terrainBump,
+      bumpScale: 0.4,
+      roughness: 0.9,
+    });
+    const cabinMat = new THREE.MeshStandardMaterial({ color: 0x7a5438, roughness: 0.84 });
+    const glassMat = new THREE.MeshStandardMaterial({
+      color: 0x2a4554,
+      emissive: 0x8a6a38,
+      emissiveIntensity: 0.25,
+      roughness: 0.22,
+      metalness: 0.3,
+    });
+    const roofMat = new THREE.MeshStandardMaterial({ color: 0x2c3b32, roughness: 0.78 });
+
+    // Timber log highway portal arches across the pass
+    const archHalf = track.course.roadWidth * 0.5 + track.course.shoulderWidth + 2.4;
+    for (const t of [0.22, 0.58, 0.86]) {
+      const s = sampleTrackAtDistance(track, track.totalLength * t);
+      const portal = new THREE.Group();
+      portal.position.set(s.pos.x, s.pos.y, s.pos.z);
+      portal.rotation.y = Math.atan2(s.tangent.x, s.tangent.z);
+
+      for (const side of [-1, 1]) {
+        const logPillar = new THREE.Mesh(new THREE.CylinderGeometry(0.82, 1.05, 13.5, 10), redwoodMat);
+        logPillar.position.set(side * archHalf, 6.2, 0);
+        portal.add(logPillar);
+      }
+      const crossLog = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, archHalf * 2 + 3.2, 10), redwoodMat);
+      crossLog.rotation.z = Math.PI / 2;
+      crossLog.position.set(0, 11.8, 0);
+      portal.add(crossLog);
+      group.add(portal);
+    }
+
+    // Pacific Northwest timber fire-lookout towers on surrounding ridges
+    const towers = COURSE_LANDMARKS[track.course.id].fireTowers ?? [];
+    for (const tw of towers) {
+      if (computeLandmarkTrackClearance(track, tw.x, tw.z, tw.radius * 1.25) < 4) continue;
+      const gy = groundHeightAt(track, tw.x, tw.z);
+      const lookout = new THREE.Group();
+      lookout.position.set(tw.x, gy - 2.0, tw.z);
+      lookout.rotation.y = tw.rotY;
+
+      for (const ox of [-2.4, 2.4]) {
+        for (const oz of [-2.4, 2.4]) {
+          const leg = new THREE.Mesh(new THREE.BoxGeometry(0.45, tw.height, 0.45), redwoodMat);
+          leg.position.set(ox, tw.height * 0.5, oz);
+          lookout.add(leg);
+        }
+      }
+      const deck = new THREE.Mesh(new THREE.BoxGeometry(7.2, 0.6, 7.2), redwoodMat);
+      deck.position.y = tw.height;
+      lookout.add(deck);
+
+      const cab = new THREE.Mesh(new THREE.BoxGeometry(5.2, 3.8, 5.2), cabinMat);
+      cab.position.y = tw.height + 2.2;
+      lookout.add(cab);
+
+      const windows = new THREE.Mesh(new THREE.BoxGeometry(5.4, 1.4, 5.4), glassMat);
+      windows.position.y = tw.height + 2.6;
+      lookout.add(windows);
+
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(4.8, 2.6, 4), roofMat);
+      roof.position.y = tw.height + 5.2;
+      roof.rotation.y = Math.PI / 4;
+      lookout.add(roof);
+      group.add(lookout);
+    }
+
+    // Distant Mount Sequoia alpine silhouette
+    const mt = COURSE_LANDMARKS[track.course.id].mountain;
+    if (mt && computeLandmarkTrackClearance(track, mt.x, mt.z, mt.baseRadius) > 8) {
+      const mtMat = new THREE.MeshStandardMaterial({
+        color: 0x3b4d4a,
+        bumpMap: terrainBump,
+        bumpScale: 0.7,
+        roughness: 0.94,
+      });
+      const snowMat = new THREE.MeshStandardMaterial({ color: 0xd0dce6, roughness: 0.86 });
+      const peak = new THREE.Mesh(new THREE.ConeGeometry(mt.baseRadius, mt.baseHeight, 14), mtMat);
+      peak.position.set(mt.x, mt.baseHeight * 0.42 - 14, mt.z);
+      group.add(peak);
+      const cap = new THREE.Mesh(new THREE.ConeGeometry(mt.snowRadius, mt.snowHeight, 14), snowMat);
+      cap.position.set(mt.x, mt.baseHeight * 0.74 - 14, mt.z);
+      group.add(cap);
+    }
+  } else if (style === 'basalt-caldera') {
+    const basaltMat = new THREE.MeshStandardMaterial({
+      color: 0x22262e,
+      bumpMap: terrainBump,
+      bumpScale: 0.72,
+      roughness: 0.88,
+      metalness: 0.08,
+    });
+    const steelMat = new THREE.MeshStandardMaterial({
+      color: 0x454e5c,
+      roughness: 0.46,
+      metalness: 0.72,
+    });
+    const ventMat = new THREE.MeshStandardMaterial({
+      color: 0x2dd4bf,
+      emissive: 0x0d9488,
+      emissiveIntensity: 0.45,
+      roughness: 0.4,
+    });
+
+    // Clustered hexagonal volcanic basalt monoliths
+    const monoliths = COURSE_LANDMARKS[track.course.id].basaltMonoliths ?? [];
+    for (const m of monoliths) {
+      if (computeLandmarkTrackClearance(track, m.x, m.z, m.radius * 1.4) < 4) continue;
+      const gy = groundHeightAt(track, m.x, m.z);
+      const cluster = new THREE.Group();
+      cluster.position.set(m.x, gy - 5, m.z);
+
+      const offsets: Array<[number, number, number, number]> = [
+        [0, 0, m.radius * 0.56, m.height],
+        [m.radius * 0.52, m.radius * 0.25, m.radius * 0.42, m.height * 0.78],
+        [-m.radius * 0.48, m.radius * 0.34, m.radius * 0.38, m.height * 0.66],
+        [m.radius * 0.12, -m.radius * 0.54, m.radius * 0.4, m.height * 0.72],
+      ];
+      for (const [ox, oz, rad, ht] of offsets) {
+        const col = new THREE.Mesh(new THREE.CylinderGeometry(rad * 0.84, rad, ht, 6), basaltMat);
+        col.position.set(ox, ht * 0.48, oz);
+        cluster.add(col);
+      }
+      group.add(cluster);
+    }
+
+    // Geothermal power & research towers with subtle mineral beacon rings
+    const geoTowers = COURSE_LANDMARKS[track.course.id].geothermalTowers ?? [];
+    for (const gt of geoTowers) {
+      if (computeLandmarkTrackClearance(track, gt.x, gt.z, gt.radius * 1.25) < 4) continue;
+      const gy = groundHeightAt(track, gt.x, gt.z);
+      const plant = new THREE.Group();
+      plant.position.set(gt.x, gy - 2, gt.z);
+      plant.rotation.y = gt.rotY;
+
+      const base = new THREE.Mesh(new THREE.BoxGeometry(12, 8, 9), steelMat);
+      base.position.y = 4;
+      plant.add(base);
+
+      const stack1 = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 2.2, gt.height, 12), steelMat);
+      stack1.position.set(-2.5, gt.height * 0.5, 0);
+      plant.add(stack1);
+
+      const stack2 = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.8, gt.height * 0.82, 12), steelMat);
+      stack2.position.set(2.5, gt.height * 0.41, 0.8);
+      plant.add(stack2);
+
+      const beaconRing = new THREE.Mesh(new THREE.TorusGeometry(1.55, 0.16, 8, 16), ventMat);
+      beaconRing.rotation.x = Math.PI / 2;
+      beaconRing.position.set(-2.5, gt.height - 1.5, 0);
+      plant.add(beaconRing);
+
+      group.add(plant);
     }
   }
 
@@ -2735,14 +3017,14 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
   stanchions.computeBoundingSphere();
   group.add(stanchions);
 
-  // 4. Trussed Start/Finish Gantry + Pit & Race Control Station + Tiered Grandstand + Pedestrian Bridge + Flags
+  // 4. Trussed Start/Finish Gantry (s=90 ahead of 12-car grid) + Pit & Race Control Station + Grandstand
   const bannerTex = createStartBannerTexture(course.name, course.accentHex, maxAnisotropy);
   ownedTextures.push(bannerTex);
-  group.add(buildStartingGantry(track, 36, bannerTex, roadTex.startGrid, concreteTex, course.accentHex));
+  group.add(buildStartingGantry(track, 90, bannerTex, roadTex.startGrid, concreteTex, course.accentHex));
 
   const stationBuild = buildRaceControlStation(
     track,
-    58,
+    112,
     timingTex,
     pitHeaderTex,
     concreteTex,
@@ -2754,7 +3036,7 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
   group.add(
     buildSpectatorGrandstand(
       track,
-      54,
+      108,
       concreteTex,
       timberSoffitTex,
       sponsorTextures[0],
@@ -2798,7 +3080,7 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
     const s = track.samples[i];
     for (const side of [-1, 1]) {
       // Keep the Pit & Race Control station (right) and Spectator Grandstand (left) footprints clear of trees
-      if (s.s > 28 && s.s < 88) continue;
+      if (s.s > 80 && s.s < 146) continue;
 
       const dist = shoulderOuter + 7 + rand() * 44;
       const x = s.pos.x + s.right.x * side * dist;
@@ -2846,9 +3128,13 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
     const isSakura = course.treeStyle === 'sakura';
     const isCypress = course.treeStyle === 'cypress';
     const isPine = course.treeStyle === 'pine';
+    const isOak = course.treeStyle === 'oak';
+    const isPalm = course.treeStyle === 'palm';
+    const isSequoia = course.treeStyle === 'sequoia';
+    const isBirch = course.treeStyle === 'birch';
 
     const barkMat = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
+      color: isBirch ? 0xcbd0d6 : isSequoia ? 0x8f4e34 : 0xffffff,
       map: foliageTex.barkAlbedo,
       bumpMap: foliageTex.barkBump,
       bumpScale: 0.28,
@@ -2856,16 +3142,28 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
     });
 
     // Tapered trunk with deep root extension (never floats on steep hillsides) + angled side bough limbs
-    const trunkH = isCypress ? 3.8 : isPine ? 4.4 : 4.0;
-    const trunkGeo = new THREE.CylinderGeometry(0.18, 0.46, trunkH, 8);
+    const trunkH = isSequoia
+      ? 9.2
+      : isPalm
+        ? 6.6
+        : isPine
+          ? 4.4
+          : isCypress
+            ? 3.8
+            : isBirch
+              ? 3.4
+              : 4.0;
+    const trunkTopR = isSequoia ? 0.52 : isPalm ? 0.14 : isBirch ? 0.12 : 0.18;
+    const trunkBotR = isSequoia ? 1.05 : isPalm ? 0.28 : isBirch ? 0.24 : 0.46;
+    const trunkGeo = new THREE.CylinderGeometry(trunkTopR, trunkBotR, trunkH, 8);
     trunkGeo.translate(0, trunkH * 0.5 - 0.75, 0);
 
-    const branchGeo = new THREE.CylinderGeometry(0.08, 0.16, 2.2, 6);
+    const branchGeo = new THREE.CylinderGeometry(0.08, 0.16, isSequoia ? 3.2 : 2.2, 6);
     branchGeo.translate(0, 1.0, 0);
     branchGeo.rotateZ(0.62);
     branchGeo.translate(0.1, trunkH * 0.62, 0);
 
-    const branch2Geo = new THREE.CylinderGeometry(0.07, 0.14, 1.9, 6);
+    const branch2Geo = new THREE.CylinderGeometry(0.07, 0.14, isSequoia ? 2.8 : 1.9, 6);
     branch2Geo.translate(0, 0.9, 0);
     branch2Geo.rotateZ(-0.56);
     branch2Geo.rotateY(1.2);
@@ -2877,7 +3175,47 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
     let crown3Geo: THREE.BufferGeometry;
     let crown4Geo: THREE.BufferGeometry;
 
-    if (isPine) {
+    if (isSequoia) {
+      // Towering Pacific Northwest giant sequoia canopy tiers
+      crown1Geo = new THREE.ConeGeometry(4.2, 5.8, 10);
+      crown1Geo.translate(0, 7.6, 0);
+      crown2Geo = new THREE.ConeGeometry(3.4, 5.2, 10);
+      crown2Geo.translate(0.18, 10.6, -0.14);
+      crown3Geo = new THREE.ConeGeometry(2.5, 4.6, 10);
+      crown3Geo.translate(-0.14, 13.4, 0.12);
+      crown4Geo = new THREE.ConeGeometry(1.5, 3.6, 9);
+      crown4Geo.translate(0.08, 15.8, -0.06);
+    } else if (isPalm) {
+      // Spreading desert oasis date-palm radial frond crown
+      crown1Geo = createOrganicFoliageGeometry(2.4, 0.24, 151);
+      crown1Geo.translate(1.4, 6.2, 0.3);
+      crown2Geo = createOrganicFoliageGeometry(2.3, 0.24, 252);
+      crown2Geo.translate(-1.35, 6.15, -0.35);
+      crown3Geo = createOrganicFoliageGeometry(2.2, 0.24, 353);
+      crown3Geo.translate(0.2, 6.3, -1.4);
+      crown4Geo = createOrganicFoliageGeometry(2.1, 0.26, 454);
+      crown4Geo.translate(-0.2, 6.45, 1.35);
+    } else if (isOak) {
+      // Lush sun-drenched broadleaf countryside oak canopy
+      crown1Geo = createOrganicFoliageGeometry(2.7, 0.85, 511);
+      crown1Geo.translate(-0.9, 4.5, 0.5);
+      crown2Geo = createOrganicFoliageGeometry(2.45, 0.82, 612);
+      crown2Geo.translate(1.25, 4.85, -0.55);
+      crown3Geo = createOrganicFoliageGeometry(2.15, 0.78, 713);
+      crown3Geo.translate(0.15, 6.1, 0.1);
+      crown4Geo = createOrganicFoliageGeometry(1.85, 0.75, 814);
+      crown4Geo.translate(-0.45, 5.3, -1.05);
+    } else if (isBirch) {
+      // Compact arctic highland silver birch with wind-swept golden-olive foliage
+      crown1Geo = createOrganicFoliageGeometry(1.65, 0.72, 911);
+      crown1Geo.translate(-0.55, 3.2, 0.3);
+      crown2Geo = createOrganicFoliageGeometry(1.45, 0.7, 922);
+      crown2Geo.translate(0.75, 3.65, -0.3);
+      crown3Geo = createOrganicFoliageGeometry(1.25, 0.68, 933);
+      crown3Geo.translate(0.1, 4.45, 0.15);
+      crown4Geo = createOrganicFoliageGeometry(1.05, 0.65, 944);
+      crown4Geo.translate(-0.25, 3.9, -0.65);
+    } else if (isPine) {
       // Multi-tiered jagged evergreen alpine spruce boughs (4 overlapping irregular tiers)
       crown1Geo = new THREE.ConeGeometry(2.85, 3.6, 9);
       crown1Geo.translate(0, 3.6, 0);
@@ -2925,7 +3263,15 @@ export function buildCourseEnvironment(track: TrackData, maxAnisotropy: number):
         ? 0x264d38
         : isPine
           ? 0x24423d
-          : 0x3f5e39;
+          : isOak
+            ? 0x3b6e35
+            : isPalm
+              ? 0x4b7438
+              : isSequoia
+                ? 0x234532
+                : isBirch
+                  ? 0x9b8642
+                  : 0x3f5e39;
 
     const foliageMat = new THREE.MeshStandardMaterial({
       color: 0xffffff,

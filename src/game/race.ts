@@ -1,3 +1,4 @@
+import { TUNING_SPECS } from './courses';
 import {
   createInitialCarState,
   headingToForward,
@@ -5,6 +6,7 @@ import {
   stepVehiclePhysics,
 } from './physics';
 import { createRoadsidePosts, stepRoadsidePosts } from './posts';
+import { RIVAL_PROFILES } from './rivals';
 import { sampleTrackAtDistance, wrapDistance } from './track';
 import type { TrackData } from './track';
 import type {
@@ -15,84 +17,106 @@ import type {
   RaceWorldState,
   RivalController,
   RunSnapshot,
+  StandingsEntry,
   TuningClass,
 } from './types';
 
-const RIVAL_ROSTER: Array<Omit<RivalController, 'boostCooldown' | 'overtakeOffset' | 'overtakeTimer'>> = [
-  {
-    id: 'rival-apex',
-    name: 'V. Lindqvist',
-    archetype: 'apex-purist',
-    colorHex: '#2563eb',
-    accentHex: '#e0f2fe',
-    basePace: 0.96,
-    preferredLane: -2.4,
-    aggression: 0.35,
-  },
-  {
-    id: 'rival-maverick',
-    name: 'K. Takahashi',
-    archetype: 'drift-maverick',
-    colorHex: '#eab308',
-    accentHex: '#18181b',
-    basePace: 0.99,
-    preferredLane: 2.5,
-    aggression: 0.75,
-  },
-  {
-    id: 'rival-hunter',
-    name: 'S. Moreau',
-    archetype: 'slipstream-hunter',
-    colorHex: '#10b981',
-    accentHex: '#ecfdf5',
-    basePace: 0.94,
-    preferredLane: 0.4,
-    aggression: 0.62,
-  },
+/**
+ * 12-car staggered 2x6 FIA starting grid layout (P1 at s = 82m down to P12 at s = 5m).
+ * Keeps all 12 cars cleanly behind the s = 90m starting lights gantry with >= 7.8m separation.
+ */
+const GRID_SLOTS_12: ReadonlyArray<{ s: number; lat: number }> = [
+  { s: 82, lat: -2.65 }, // P1
+  { s: 75, lat: 2.65 },  // P2
+  { s: 68, lat: -2.65 }, // P3
+  { s: 61, lat: 2.65 },  // P4
+  { s: 54, lat: -2.65 }, // P5
+  { s: 47, lat: 2.65 },  // P6
+  { s: 40, lat: -2.65 }, // P7
+  { s: 33, lat: 2.65 },  // P8
+  { s: 26, lat: -2.65 }, // P9
+  { s: 19, lat: 2.65 },  // P10 (Player in Grand Prix: 9 distinct cars ahead + 2 right behind!)
+  { s: 12, lat: -2.65 }, // P11
+  { s: 5, lat: 2.65 },   // P12
 ];
+
+const PLAYER_GP_GRID_INDEX = 9; // Starts P10 of 12 for immediate multi-car overtakes & mirror battles
 
 export function createRaceWorld(
   track: TrackData,
   mode: GameMode,
-  playerColors: { bodyColor: string; accentColor: string },
+  playerColors: {
+    bodyColor: string;
+    accentColor: string;
+    racingNumber?: string;
+    vehicleModel?: string;
+  },
   opts?: { tuning?: TuningClass; skipCountdown?: boolean },
 ): RaceWorldState {
   const tuning: TuningClass = opts?.tuning ?? 'balanced';
-  const startS = wrapDistance(12, track.totalLength);
+  const tuningLabel = TUNING_SPECS[tuning].label;
+
+  const playerSlot =
+    mode === 'grand-prix'
+      ? GRID_SLOTS_12[PLAYER_GP_GRID_INDEX]
+      : { s: 40, lat: 0 };
+
   const player = createInitialCarState(track, {
     id: 'player',
     name: 'You',
+    racingNumber: playerColors.racingNumber ?? '07',
+    vehicleModel: playerColors.vehicleModel ?? 'Solstice GT',
+    specialty: tuningLabel,
     isPlayer: true,
     colorHex: playerColors.bodyColor,
     accentHex: playerColors.accentColor,
-    startS,
-    lateralOffset: mode === 'grand-prix' ? -2.4 : 0,
+    startS: wrapDistance(playerSlot.s, track.totalLength),
+    lateralOffset: playerSlot.lat,
   });
+  player.totalProgress = player.trackS;
 
   const rivals: CarState[] = [];
   const rivalControllers: RivalController[] = [];
 
   if (mode === 'grand-prix') {
-    const gridOffsets = [
-      { ds: 10, lat: 2.4 },
-      { ds: 20, lat: -2.4 },
-      { ds: 30, lat: 2.4 },
-    ];
-    RIVAL_ROSTER.forEach((spec, idx) => {
-      const slot = gridOffsets[idx];
+    const rivalSlots = GRID_SLOTS_12.filter((_, idx) => idx !== PLAYER_GP_GRID_INDEX);
+
+    RIVAL_PROFILES.forEach((profile, idx) => {
+      const slot = rivalSlots[idx];
       const car = createInitialCarState(track, {
-        id: spec.id,
-        name: spec.name,
+        id: profile.id,
+        name: profile.name,
+        racingNumber: profile.livery.racingNumber,
+        vehicleModel: profile.vehicleModel,
+        specialty: profile.specialty,
         isPlayer: false,
-        colorHex: spec.colorHex,
-        accentHex: spec.accentHex,
-        startS: wrapDistance(startS + slot.ds, track.totalLength),
+        colorHex: profile.livery.bodyColor,
+        accentHex: profile.livery.accentColor,
+        startS: wrapDistance(slot.s, track.totalLength),
         lateralOffset: slot.lat,
+        modifiers: profile.modifiers,
       });
+      car.totalProgress = car.trackS;
+
       rivals.push(car);
       rivalControllers.push({
-        ...spec,
-        boostCooldown: 3 + idx * 1.5,
+        id: profile.id,
+        name: profile.name,
+        racingNumber: profile.livery.racingNumber,
+        vehicleModel: profile.vehicleModel,
+        specialty: profile.specialty,
+        archetype: profile.archetype,
+        livery: profile.livery,
+        modifiers: profile.modifiers,
+        colorHex: profile.livery.bodyColor,
+        accentHex: profile.livery.accentColor,
+        basePace: profile.basePace,
+        preferredLane: profile.preferredLane,
+        aggression: profile.aggression,
+        defensiveBias: profile.defensiveBias,
+        driftAffinity: profile.driftAffinity,
+        boostThreshold: profile.boostThreshold,
+        boostCooldown: 2.2 + (idx % 5) * 1.1,
         overtakeOffset: 0,
         overtakeTimer: 0,
       });
@@ -163,54 +187,88 @@ export function computeRivalInput(
   track: TrackData,
   dt: number,
 ): InputState {
-  const halfRoad = track.course.roadWidth * 0.5 - 2.2;
-  const lookAheadDist =
-    ctrl.archetype === 'apex-purist'
-      ? Math.max(22, car.speed * 0.68)
-      : ctrl.archetype === 'drift-maverick'
-        ? Math.max(18, car.speed * 0.54)
-        : Math.max(20, car.speed * 0.6);
+  const halfRoad = track.course.roadWidth * 0.5 - 2.1;
+
+  // Archetype-tuned lookahead horizon
+  const lookAheadFactor =
+    ctrl.archetype === 'apex-purist' || ctrl.archetype === 'endurance-metronome'
+      ? 0.68
+      : ctrl.archetype === 'late-braker' || ctrl.archetype === 'alpine-climber'
+        ? 0.56
+        : ctrl.archetype === 'drift-maverick' || ctrl.archetype === 'canyon-daredevil'
+          ? 0.52
+          : 0.61;
+  const lookAheadDist = Math.max(18, car.speed * lookAheadFactor);
 
   const nearSample = sampleTrackAtDistance(track, car.trackS + 14);
   const farSample = sampleTrackAtDistance(track, car.trackS + lookAheadDist);
-  const curveAhead = sampleTrackAtDistance(track, car.trackS + Math.max(30, car.speed * 0.95));
+  const curveAhead = sampleTrackAtDistance(
+    track,
+    car.trackS + Math.max(28, car.speed * (ctrl.archetype === 'late-braker' ? 0.8 : 0.96)),
+  );
+
+  // Detect closest car immediately ahead and behind for realistic pack racing & overtaking
+  let carAhead: CarState | null = null;
+  let aheadGap = 42;
+  let carBehind: CarState | null = null;
+  let behindGap = 18;
+  for (const other of allCars) {
+    if (other.id === car.id) continue;
+    const gapFwd = wrapDistance(other.trackS - car.trackS, track.totalLength);
+    if (gapFwd > 2.5 && gapFwd < aheadGap) {
+      aheadGap = gapFwd;
+      carAhead = other;
+    }
+    const gapBwd = wrapDistance(car.trackS - other.trackS, track.totalLength);
+    if (gapBwd > 2.5 && gapBwd < behindGap) {
+      behindGap = gapBwd;
+      carBehind = other;
+    }
+  }
+
+  if (ctrl.overtakeTimer > 0) {
+    ctrl.overtakeTimer = Math.max(0, ctrl.overtakeTimer - dt);
+  }
 
   let targetLane = ctrl.preferredLane;
-  if (ctrl.archetype === 'apex-purist') {
-    const apexPull = Math.max(-halfRoad, Math.min(halfRoad, -farSample.curvature * 190));
-    targetLane = apexPull * 0.82;
-  } else if (ctrl.archetype === 'drift-maverick') {
-    const wideEntry = Math.max(-halfRoad, Math.min(halfRoad, nearSample.curvature * 140));
-    targetLane = wideEntry * 0.72 + Math.sin(car.trackS * 0.03) * 1.1;
-  } else {
-    let draftTarget: CarState | null = null;
-    let bestGap = 45;
-    for (const other of allCars) {
-      if (other.id === car.id) continue;
-      const gap = wrapDistance(other.trackS - car.trackS, track.totalLength);
-      if (gap > 5 && gap < bestGap) {
-        bestGap = gap;
-        draftTarget = other;
-      }
-    }
 
-    if (ctrl.overtakeTimer > 0) {
-      ctrl.overtakeTimer = Math.max(0, ctrl.overtakeTimer - dt);
-    }
-
-    if (draftTarget) {
-      if (bestGap < 15 && ctrl.overtakeTimer <= 0) {
-        ctrl.overtakeOffset = draftTarget.lateralOffset >= 0 ? -3.4 : 3.4;
+  // Distinct racing lines per archetype
+  if (ctrl.archetype === 'apex-purist' || ctrl.archetype === 'alpine-climber') {
+    const apexPull = Math.max(-halfRoad, Math.min(halfRoad, -farSample.curvature * 195));
+    targetLane = apexPull * 0.86;
+  } else if (ctrl.archetype === 'drift-maverick' || ctrl.archetype === 'canyon-daredevil') {
+    const wideEntry = Math.max(-halfRoad, Math.min(halfRoad, nearSample.curvature * 145));
+    targetLane = wideEntry * 0.72 + Math.sin(car.trackS * 0.028 + ctrl.preferredLane) * 1.15;
+  } else if (ctrl.archetype === 'slipstream-hunter') {
+    if (carAhead && aheadGap < 38) {
+      if (aheadGap < 14 && ctrl.overtakeTimer <= 0) {
+        ctrl.overtakeOffset = carAhead.lateralOffset >= 0 ? -3.4 : 3.4;
         ctrl.overtakeTimer = 2.4;
       }
-      if (ctrl.overtakeTimer > 0) {
-        targetLane = Math.max(-halfRoad, Math.min(halfRoad, draftTarget.lateralOffset + ctrl.overtakeOffset));
-      } else {
-        targetLane = Math.max(-halfRoad, Math.min(halfRoad, draftTarget.lateralOffset));
-      }
+      targetLane =
+        ctrl.overtakeTimer > 0
+          ? carAhead.lateralOffset + ctrl.overtakeOffset
+          : carAhead.lateralOffset;
     } else {
-      targetLane = Math.max(-halfRoad, Math.min(halfRoad, -farSample.curvature * 110));
+      targetLane = -farSample.curvature * 120;
     }
+  } else if (ctrl.archetype === 'defensive-guard' && carBehind && behindGap < 14) {
+    // Cover the inside line of the upcoming corner or mirror challenger subtly
+    const insideDir = farSample.curvature >= 0 ? -1 : 1;
+    targetLane = Math.max(-halfRoad * 0.78, Math.min(halfRoad * 0.78, insideDir * 2.4 + carBehind.lateralOffset * 0.35));
+  } else {
+    // Natural racing line blended with driver's preferred lane
+    targetLane = ctrl.preferredLane * 0.42 + Math.max(-halfRoad, Math.min(halfRoad, -farSample.curvature * 135)) * 0.58;
+  }
+
+  // Pack-awareness: all 11 rivals cleanly pull out to overtake slower cars directly ahead!
+  if (carAhead && aheadGap < 14 && Math.abs(carAhead.lateralOffset - car.lateralOffset) < 2.8) {
+    if (ctrl.overtakeTimer <= 0) {
+      const goRight = carAhead.lateralOffset < 0.2;
+      ctrl.overtakeOffset = goRight ? 3.5 : -3.5;
+      ctrl.overtakeTimer = 1.6 + ctrl.aggression * 0.8;
+    }
+    targetLane = carAhead.lateralOffset + ctrl.overtakeOffset;
   }
 
   targetLane = Math.max(-halfRoad, Math.min(halfRoad, targetLane));
@@ -220,48 +278,49 @@ export function computeRivalInput(
 
   const desiredHeading = Math.atan2(aimX - car.x, aimZ - car.z);
   const headingErr = normalizeAngle(desiredHeading - car.heading);
-
-  const steer = Math.max(-1, Math.min(1, headingErr * 2.25));
+  const steer = Math.max(-1, Math.min(1, headingErr * 2.3));
 
   const sharpness = Math.abs(curveAhead.curvature) + Math.abs(farSample.curvature) * 0.6;
   let throttle = 1.0;
   let brake = 0;
   let drift = false;
 
-  if (ctrl.archetype === 'apex-purist') {
-    const safeSpeed = sharpness > 0.018 ? 38 : sharpness > 0.011 ? 49 : 65;
-    if (car.speed > safeSpeed) {
-      throttle = 0.2;
-      brake = Math.min(0.8, (car.speed - safeSpeed) / 22);
-    }
-  } else if (ctrl.archetype === 'drift-maverick') {
-    if (sharpness > 0.012 && car.speed > 28 && Math.abs(steer) > 0.28) {
-      drift = true;
-      throttle = 0.92;
-    } else if (sharpness > 0.024 && car.speed > 44) {
-      throttle = 0.35;
-      brake = 0.45;
-    }
+  // Distinct braking & cornering commitment per specialty
+  const brakeAllowance =
+    ctrl.archetype === 'late-braker'
+      ? 1.12
+      : ctrl.archetype === 'apex-purist' || ctrl.archetype === 'alpine-climber'
+        ? 1.06
+        : ctrl.archetype === 'aero-demon'
+          ? 0.94
+          : 1.0;
+
+  if (ctrl.driftAffinity >= 0.65 && sharpness > 0.012 && car.speed > 27 && Math.abs(steer) > 0.26) {
+    drift = true;
+    throttle = 0.9;
   } else {
-    const safeSpeed = sharpness > 0.019 ? 40 : sharpness > 0.012 ? 51 : 65;
+    const safeSpeed = (sharpness > 0.019 ? 38 : sharpness > 0.0115 ? 49 : 66) * brakeAllowance;
     if (car.speed > safeSpeed) {
-      throttle = 0.3;
-      brake = Math.min(0.7, (car.speed - safeSpeed) / 20);
+      throttle = ctrl.archetype === 'late-braker' ? 0.12 : 0.26;
+      brake = Math.min(0.85, (car.speed - safeSpeed) / 21);
     }
   }
 
+  // Distinct Overdrive boost deployment strategy per driver
   ctrl.boostCooldown = Math.max(0, ctrl.boostCooldown - dt);
   let boost = false;
-  if (ctrl.boostCooldown <= 0 && car.boostEnergy > 45 && sharpness < 0.009) {
-    if (ctrl.archetype === 'drift-maverick' && car.boostEnergy > 52) {
-      boost = true;
-    } else if (ctrl.archetype === 'slipstream-hunter' && (car.slipstreamIntensity > 0.25 || ctrl.overtakeTimer > 0)) {
-      boost = true;
-    } else if (ctrl.archetype === 'apex-purist' && car.boostEnergy > 78) {
+  if (ctrl.boostCooldown <= 0 && car.boostEnergy >= ctrl.boostThreshold && sharpness < 0.0095) {
+    if (ctrl.archetype === 'slipstream-hunter') {
+      boost = car.slipstreamIntensity > 0.2 || ctrl.overtakeTimer > 0;
+    } else if (ctrl.archetype === 'boost-sprinter') {
+      boost = car.boostEnergy >= 64;
+    } else if (ctrl.archetype === 'launch-rocket') {
+      boost = car.speed > 18 && car.speed < 54;
+    } else {
       boost = true;
     }
-    if (boost && car.boostEnergy < 22) {
-      ctrl.boostCooldown = 4.5;
+    if (boost && car.boostEnergy < 24) {
+      ctrl.boostCooldown = 4.2;
     }
   }
   if (car.isBoosting && sharpness < 0.012 && car.boostEnergy > 14) {
@@ -365,7 +424,7 @@ function resolveCarCollisions(cars: CarState[], events: RaceEvent[]): void {
     for (let j = i + 1; j < cars.length; j++) {
       const a = cars[i];
       const b = cars[j];
-      if (Math.abs(a.y - b.y) > 2.0) continue; // Airborne jump can cleanly clear another car!
+      if (Math.abs(a.y - b.y) > 2.0) continue;
       const dx = b.x - a.x;
       const dz = b.z - a.z;
       const dSq = dx * dx + dz * dz;
@@ -461,7 +520,6 @@ export function stepRaceWorld(
       });
     }
 
-    // Rev engine RPM on the start grid while holding throttle!
     const targetRev = playerInput.throttle > 0.1 ? 0.45 + playerInput.throttle * 0.45 : 0.18;
     world.player.rpm += (targetRev - world.player.rpm) * (1 - Math.exp(-10 * dt));
 
@@ -470,7 +528,18 @@ export function stepRaceWorld(
       world.lastCountdownDigit = 0;
       frameEvents.push({ type: 'countdown-tick', intensity: 1.0, label: 'GO!' });
 
-      // Perfect Launch bonus if player is holding throttle on GO!
+      // Launch-rocket rivals get a snappy start reaction off the line!
+      for (let i = 0; i < world.rivals.length; i++) {
+        const ctrl = world.rivalControllers[i];
+        if (ctrl.archetype === 'launch-rocket') {
+          const r = world.rivals[i];
+          const fwd = headingToForward(r.heading);
+          r.vx = fwd.x * 14;
+          r.vz = fwd.z * 14;
+          r.speed = 14;
+        }
+      }
+
       if (playerInput.throttle > 0.5) {
         const fwd = headingToForward(world.player.heading);
         world.player.vx = fwd.x * 24;
@@ -555,7 +624,7 @@ export function stepRaceWorld(
     frameEvents,
   );
 
-  // Step AI rivals
+  // Step all 11 AI rivals with their distinct tuning classes and physical strength profiles
   for (let i = 0; i < world.rivals.length; i++) {
     const rival = world.rivals[i];
     const ctrl = world.rivalControllers[i];
@@ -563,10 +632,10 @@ export function stepRaceWorld(
     const aiInput = computeRivalInput(rival, ctrl, allCars, track, dt);
 
     const gapToPlayer = world.player.totalProgress - rival.totalProgress;
-    const rubberBand = Math.max(-0.06, Math.min(0.08, gapToPlayer / 520));
-    const pace = Math.max(0.86, Math.min(1.06, ctrl.basePace + rubberBand));
+    const rubberBand = Math.max(-0.045, Math.min(0.06, gapToPlayer / 700));
+    const pace = Math.max(0.84, Math.min(1.04, ctrl.basePace + rubberBand));
 
-    stepVehiclePhysics(rival, aiInput, track, dt, pace, 'balanced');
+    stepVehiclePhysics(rival, aiInput, track, dt, pace, ctrl.livery.tuning);
     updateCheckpointsAndLaps(
       rival,
       prevS,
@@ -611,6 +680,33 @@ export function stepRaceWorld(
   return frameEvents;
 }
 
+export function buildStandingsTable(world: RaceWorldState): StandingsEntry[] {
+  const allById = new Map<string, CarState>();
+  allById.set(world.player.id, world.player);
+  for (const r of world.rivals) {
+    allById.set(r.id, r);
+  }
+
+  const leader = allById.get(world.standings[0]) ?? world.player;
+  return world.standings.map((id, idx) => {
+    const car = allById.get(id) ?? world.player;
+    return {
+      position: idx + 1,
+      id: car.id,
+      name: car.name,
+      racingNumber: car.racingNumber,
+      vehicleModel: car.vehicleModel,
+      specialty: car.specialty,
+      colorHex: car.colorHex,
+      accentHex: car.accentHex,
+      isPlayer: car.isPlayer,
+      finished: car.finished,
+      finishTime: car.finishTime,
+      gapMeters: Math.max(0, Math.round(leader.totalProgress - car.totalProgress)),
+    };
+  });
+}
+
 export function buildRunSnapshot(
   world: RaceWorldState,
   track: TrackData,
@@ -629,5 +725,6 @@ export function buildRunSnapshot(
     totalStyleScore: Math.round(world.player.totalStyleScore + world.player.activeDriftScore),
     topSpeedKmh: Math.round(topSpeedKmh),
     isVictory: world.mode !== 'grand-prix' ? true : position <= 3,
+    standingsTable: buildStandingsTable(world),
   };
 }

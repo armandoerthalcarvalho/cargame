@@ -362,7 +362,17 @@ export function groundHeightAt(track: TrackData, x: number, z: number): number {
   const horizonBoost = Math.pow(Math.min(farDist / 290, 1.3), 1.32) * 76;
 
   let naturalY = 0;
-  if (track.course.id === 'sunstone-canyon') {
+  if (track.course.id === 'emerald-oval') {
+    // Gentle pastoral rolling hills & open meadow valley
+    const hillRise = Math.max(0, absLat - 32) * 0.14 + horizonBoost * 0.45;
+    naturalY = proj.roadY - 1.2 + n1 * 7.5 + n2 * 3.2 + n3 * 1.2 + hillRise * (0.6 + smoothRidge * 0.35);
+  } else if (track.course.id === 'amber-dunes') {
+    // Wind-swept sweeping Sahara sand dunes with oasis basin dips
+    const duneWave = Math.sin(x * 0.011 + z * 0.0085) * 8.5 + Math.cos(x * 0.018 - z * 0.014) * 4.2;
+    const oasisDip = Math.sin(x * 0.0042 - z * 0.0038) < -0.52 ? -9.5 : 0;
+    const duneRise = Math.max(0, absLat - 28) * 0.19 + horizonBoost * 0.58;
+    naturalY = proj.roadY - 1.5 + duneWave + oasisDip + n2 * 2.5 + duneRise * (0.52 + smoothRidge * 0.48);
+  } else if (track.course.id === 'sunstone-canyon') {
     // Broad red-rock canyon walls + stepped sandstone benches + rolling talus hills
     const rawWall = Math.max(0, absLat - 28) * 0.28 + horizonBoost * 0.74;
     const rawElev = proj.roadY - 1.6 + n1 * 11 + n2 * 5.2 + n3 * 2.4 + n4 * 1.0 + rawWall * (0.58 + smoothRidge * 0.62);
@@ -381,6 +391,17 @@ export function groundHeightAt(track: TrackData, x: number, z: number): number {
     const ridgeRise = Math.max(0, absLat - 26) * 0.25 + horizonBoost * 0.82;
     const rawSlope = proj.roadY - 1.4 + n1 * 12 + n2 * 4.6 + n3 * 2.0 + ridgeRise * (0.54 + smoothRidge * 0.68);
     naturalY = Math.round(rawSlope / 5.0) * 5.0 * 0.16 + rawSlope * 0.84;
+  } else if (track.course.id === 'redwood-switchbacks') {
+    // Steep misty Pacific Northwest redwood mountain gorge walls
+    const gorgeRise = Math.max(0, absLat - 24) * 0.32 + horizonBoost * 0.88;
+    naturalY = proj.roadY - 1.8 + n1 * 13 + n2 * 5.4 + n3 * 2.2 + n4 * 0.9 + gorgeRise * (0.56 + smoothRidge * 0.72);
+  } else if (track.course.id === 'obsidian-caldera') {
+    // Dramatic volcanic black-basalt caldera rim with geothermal basin pools
+    const basinDip = Math.cos(x * 0.0052 + z * 0.0047) < -0.56 ? -11.2 : 0;
+    const calderaWall = Math.max(0, absLat - 26) * 0.34 + horizonBoost * 0.94;
+    const rawElev = proj.roadY - 1.6 + basinDip + n1 * 12 + n2 * 5.8 + n3 * 2.6 + calderaWall * (0.54 + smoothRidge * 0.78);
+    const step = Math.floor(rawElev / 7.0) * 7.0 + Math.min(7.0, Math.pow(((rawElev % 7.0) + 7.0) % 7.0 / 7.0, 0.7) * 7.0);
+    naturalY = step * 0.24 + rawElev * 0.76;
   } else {
     // Majestic sculpted alpine glacier massifs
     const peakRise = Math.max(0, absLat - 24) * 0.38 + horizonBoost * 0.96;

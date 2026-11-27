@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { COURSE_LIST, COURSES, LIVERY_PRESETS, RADIO_STATIONS } from './game/courses';
+import { COURSE_LIST, COURSES, LIVERY_PRESETS } from './game/courses';
 import type { TrackData } from './game/track';
 import type {
   CourseId,
@@ -31,8 +31,8 @@ const INITIAL_TELEMETRY: HudTelemetry = {
   comboMultiplier: 1,
   comboTimer: 0,
   slipstream: 0,
-  position: 1,
-  totalRacers: 4,
+  position: 10,
+  totalRacers: 12,
   lap: 1,
   totalLaps: 3,
   lapProgress: 0,
@@ -46,6 +46,7 @@ const INITIAL_TELEMETRY: HudTelemetry = {
   cameraMode: 'chase',
   mode: 'grand-prix',
   minimapRacers: [],
+  standingsTable: [],
 };
 
 export default function App() {
@@ -62,7 +63,6 @@ export default function App() {
   const [runSnapshot, setRunSnapshot] = useState<RunSnapshot | null>(null);
   const [webglError, setWebglError] = useState<string | null>(null);
 
-  // Native Garage & Touring Radio state (100% instant, zero unavailable external APIs)
   const [garageOpen, setGarageOpen] = useState(false);
   const [liveryConfig, setLiveryConfig] = useState<LiveryConfig>({ ...LIVERY_PRESETS[0] });
   const [radioStation, setRadioStation] = useState<RadioStationId>('solstice');
@@ -168,33 +168,23 @@ export default function App() {
     engineRef.current?.setRadioStation(station);
   }, []);
 
-  const handleCycleRadio = useCallback(() => {
-    const idx = RADIO_STATIONS.findIndex((s) => s.id === radioStation);
-    const next = RADIO_STATIONS[(idx + 1) % RADIO_STATIONS.length].id;
-    setRadioStation(next);
-    engineRef.current?.setRadioStation(next);
-  }, [radioStation]);
-
   const handleTouchChange = useCallback((partial: Partial<TouchInputState>) => {
     engineRef.current?.setTouchInput(partial);
   }, []);
 
   return (
     <main className="relative w-screen h-screen overflow-hidden bg-[#0e1116]">
-      {/* Dedicated isolated WebGL canvas container */}
       <div ref={canvasMountRef} className="fixed inset-0 w-full h-full" />
 
-      {/* Graceful WebGL fallback overlay */}
       {webglError && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0e1116] p-6">
-          <div className="max-w-md rounded-xl bg-[#161b25] border border-white/15 p-6 text-center">
+          <div className="max-w-md rounded-lg bg-[#161b25] border border-white/15 p-6 text-center">
             <h1 className="font-display text-2xl font-bold text-[#f7f4ec]">3D Graphics Unavailable</h1>
             <p className="text-sm text-[#a6b0c0] mt-2 leading-relaxed">{webglError}</p>
           </div>
         </div>
       )}
 
-      {/* Title Screen Game Shell */}
       {phase === 'title' && !webglError && !garageOpen && (
         <TitleOverlay
           selectedCourse={courseId}
@@ -202,7 +192,6 @@ export default function App() {
           timeOfDay={timeOfDay}
           trackLengthMeters={trackData?.totalLength ?? null}
           liveryConfig={liveryConfig}
-          radioStation={radioStation}
           onSelectCourse={handleSelectCourse}
           onSelectMode={handleSelectMode}
           onSelectTimeOfDay={handleSelectTimeOfDay}
@@ -211,33 +200,32 @@ export default function App() {
         />
       )}
 
-      {/* Active Driving HUD */}
       {phase === 'playing' && !webglError && (
         <DrivingHud
           telemetry={telemetry}
           track={trackData}
           muted={muted}
-          radioStation={radioStation}
           onCycleCamera={() => engineRef.current?.cycleCamera()}
-          onCycleRadio={handleCycleRadio}
           onResetToTrack={() => engineRef.current?.resetPlayerToTrack()}
           onToggleMute={() => engineRef.current?.toggleMute()}
           onPause={handlePause}
-          onRestart={handleStart}
           onTouchChange={handleTouchChange}
         />
       )}
 
-      {/* Pause Modal */}
       {phase === 'paused' && !garageOpen && (
         <PauseModal
           courseName={COURSES[courseId].name}
           mode={mode}
           timeOfDay={timeOfDay}
+          radioStation={radioStation}
           lap={telemetry.lap}
           totalLaps={telemetry.totalLaps}
           elapsedTime={telemetry.elapsedTime}
+          standingsTable={telemetry.standingsTable}
           onSelectTimeOfDay={handleSelectTimeOfDay}
+          onSelectRadio={handleSelectRadio}
+          onResetToTrack={() => engineRef.current?.resetPlayerToTrack()}
           onResume={handleResume}
           onRestart={handleStart}
           onOpenGarage={() => setGarageOpen(true)}
@@ -245,7 +233,6 @@ export default function App() {
         />
       )}
 
-      {/* Race Complete / Victory Modal */}
       {phase === 'gameover' && runSnapshot && (
         <FinishModal
           snapshot={runSnapshot}
@@ -255,7 +242,6 @@ export default function App() {
         />
       )}
 
-      {/* Native Car Workshop & Built-in Touring Radio Modal */}
       {garageOpen && (
         <GarageModal
           config={liveryConfig}

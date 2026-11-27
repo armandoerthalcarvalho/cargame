@@ -383,6 +383,25 @@ function applyRimFinish(mat: THREE.MeshStandardMaterial, finish: RimFinish): voi
   mat.needsUpdate = true;
 }
 
+let sharedCarTextures: {
+  carbonTex: ReturnType<typeof createCarbonWeaveTexture>;
+  rotorTex: THREE.CanvasTexture;
+  tireTex: THREE.CanvasTexture;
+  grilleTexture: THREE.CanvasTexture;
+} | null = null;
+
+function getSharedCarTextures(maxAnisotropy: number) {
+  if (!sharedCarTextures) {
+    sharedCarTextures = {
+      carbonTex: createCarbonWeaveTexture(maxAnisotropy),
+      rotorTex: createBrakeRotorTexture(maxAnisotropy),
+      tireTex: createTireTreadTexture(maxAnisotropy),
+      grilleTexture: createHoneycombGrilleTexture(maxAnisotropy),
+    };
+  }
+  return sharedCarTextures;
+}
+
 export function buildCompositeCar(opts: {
   bodyColor: string;
   accentColor: string;
@@ -419,9 +438,7 @@ export function buildCompositeCar(opts: {
     envMapIntensity: 0.65,
   });
 
-  const carbonTex = createCarbonWeaveTexture(opts.maxAnisotropy);
-  const rotorTex = createBrakeRotorTexture(opts.maxAnisotropy);
-  const tireTex = createTireTreadTexture(opts.maxAnisotropy);
+  const { carbonTex, rotorTex, tireTex, grilleTexture } = getSharedCarTextures(opts.maxAnisotropy);
   const dashTex = createCockpitDashTexture(opts.accentColor, opts.maxAnisotropy);
 
   const carbonMaterial = new THREE.MeshPhysicalMaterial({
@@ -469,7 +486,6 @@ export function buildCompositeCar(opts: {
     roughness: 0.82,
   });
 
-  const grilleTexture = createHoneycombGrilleTexture(opts.maxAnisotropy);
   const grilleMaterial = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     map: grilleTexture,
@@ -1077,15 +1093,10 @@ export function buildCompositeCar(opts: {
     doorMaterial.dispose();
     plateMaterial.dispose();
     shadowMat.dispose();
-    carbonTex.albedo.dispose();
-    carbonTex.bump.dispose();
-    rotorTex.dispose();
-    tireTex.dispose();
     dashTex.dispose();
     if (liveryTexture) liveryTexture.dispose();
     if (doorTexture) doorTexture.dispose();
     if (plateTexture) plateTexture.dispose();
-    if (grilleTexture) grilleTexture.dispose();
   };
 
   return {

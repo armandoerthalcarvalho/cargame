@@ -4,9 +4,15 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { DrivingAudioEngine } from '../game/audio';
-import { COURSES, LIVERY_PRESETS } from '../game/courses';
+import { COURSES, LIVERY_PRESETS, TUNING_SPECS } from '../game/courses';
 import { headingToForward, headingToRight } from '../game/physics';
-import { buildRunSnapshot, createRaceWorld, resetCarToTrack, stepRaceWorld } from '../game/race';
+import {
+  buildRunSnapshot,
+  buildStandingsTable,
+  createRaceWorld,
+  resetCarToTrack,
+  stepRaceWorld,
+} from '../game/race';
 import { buildTrack, sampleTrackAtDistance } from '../game/track';
 import type { TrackData } from '../game/track';
 import type {
@@ -176,6 +182,8 @@ export class SolsticeSceneEngine {
       {
         bodyColor: this.liveryConfig.bodyColor,
         accentColor: this.liveryConfig.accentColor,
+        racingNumber: this.liveryConfig.racingNumber,
+        vehicleModel: this.liveryConfig.name,
       },
       { tuning: this.liveryConfig.tuning, skipCountdown: autostart },
     );
@@ -457,6 +465,8 @@ export class SolsticeSceneEngine {
       {
         bodyColor: this.liveryConfig.bodyColor,
         accentColor: this.liveryConfig.accentColor,
+        racingNumber: this.liveryConfig.racingNumber,
+        vehicleModel: this.liveryConfig.name,
       },
       { tuning: this.liveryConfig.tuning, skipCountdown },
     );
@@ -475,20 +485,20 @@ export class SolsticeSceneEngine {
     this.prevPlayerSpeed = 0;
     this.camAccelLag = 0;
 
-    // Spawn hyper-detailed composite 3D cars for player + rivals
-    const rivalNumbers = ['11', '42', '88'];
+    // Spawn hyper-detailed composite 3D cars for player + all 11 unique GP rivals (12 total)
+    const ctrlById = new Map(this.world.rivalControllers.map((c) => [c.id, c]));
     const allCars = [this.world.player, ...this.world.rivals];
-    allCars.forEach((car, idx) => {
+    allCars.forEach((car) => {
+      const ctrl = ctrlById.get(car.id);
+      const carConfig = car.isPlayer ? this.liveryConfig : ctrl?.livery;
       const rig = buildCompositeCar({
         bodyColor: car.colorHex,
         accentColor: car.accentHex,
         contactShadowTex: this.contactShadowTex,
         headlightBeamTex: this.headlightBeamTex,
         maxAnisotropy: maxAniso,
-        initialConfig: car.isPlayer ? this.liveryConfig : undefined,
-        racingNumber: car.isPlayer
-          ? this.liveryConfig.racingNumber
-          : rivalNumbers[(idx - 1) % rivalNumbers.length],
+        initialConfig: carConfig,
+        racingNumber: car.racingNumber,
       });
       const sample = sampleTrackAtDistance(this.track, car.trackS);
       syncCarRigToState(rig, car, sample.bankAngle, false, 0);
@@ -551,6 +561,9 @@ export class SolsticeSceneEngine {
     this.world.tuning = config.tuning;
     this.world.player.colorHex = config.bodyColor;
     this.world.player.accentHex = config.accentColor;
+    this.world.player.racingNumber = config.racingNumber;
+    this.world.player.vehicleModel = config.name;
+    this.world.player.specialty = TUNING_SPECS[config.tuning].label;
     const playerRig = this.carRigs.get('player');
     playerRig?.applyLivery(this.liveryConfig);
     this.emitTelemetryNow();
@@ -1092,6 +1105,7 @@ export class SolsticeSceneEngine {
         isPlayer: c.isPlayer,
         colorHex: c.isPlayer ? this.liveryConfig.accentColor : c.colorHex,
       })),
+      standingsTable: buildStandingsTable(this.world),
     });
   }
 

@@ -1,11 +1,12 @@
-import { useMemo } from 'react';
-import { COURSE_LIST, RADIO_STATIONS, TUNING_SPECS } from '../game/courses';
+import { useMemo, useState } from 'react';
+import { COURSE_LIST, COURSES, TUNING_SPECS } from '../game/courses';
+import { buildTrack } from '../game/track';
 import type {
   CourseId,
+  CourseLengthCategory,
   CourseTheme,
   GameMode,
   LiveryConfig,
-  RadioStationId,
   TimeOfDay,
 } from '../game/types';
 
@@ -15,12 +16,34 @@ interface TitleOverlayProps {
   timeOfDay: TimeOfDay;
   trackLengthMeters: number | null;
   liveryConfig: LiveryConfig;
-  radioStation: RadioStationId;
-  onSelectCourse: (id: CourseId) => void;
+  onSelectCourse: (courseId: CourseId) => void;
   onSelectMode: (mode: GameMode) => void;
   onSelectTimeOfDay: (tod: TimeOfDay) => void;
   onStart: () => void;
   onOpenGarage: () => void;
+}
+
+const MODE_OPTIONS: Array<{ id: GameMode; label: string }> = [
+  { id: 'grand-prix', label: 'Grand Prix (12)' },
+  { id: 'time-trial', label: 'Time Trial' },
+  { id: 'free-roam', label: 'Free Roam' },
+];
+
+const TIME_OPTIONS: Array<{ id: TimeOfDay; label: string }> = [
+  { id: 'golden', label: 'Golden' },
+  { id: 'noon', label: 'Noon' },
+  { id: 'twilight', label: 'Twilight' },
+];
+
+const LENGTH_FILTERS: Array<{ id: 'All' | CourseLengthCategory; label: string }> = [
+  { id: 'All', label: 'All (8)' },
+  { id: 'Short', label: 'Short' },
+  { id: 'Medium', label: 'Medium' },
+  { id: 'Long', label: 'Long' },
+];
+
+function computeExactLengthKm(course: CourseTheme): string {
+  return (buildTrack(course, 96).totalLength / 1000).toFixed(2);
 }
 
 function buildMiniOutlinePath(course: CourseTheme): string {
@@ -36,27 +59,22 @@ function buildMiniOutlinePath(course: CourseTheme): string {
     if (p.z > maxZ) maxZ = p.z;
   }
   const span = Math.max(1, maxX - minX, maxZ - minZ);
-  const pad = 4;
-  const inner = 32 - pad * 2;
-  const ox = (span - (maxX - minX)) * 0.5;
-  const oz = (span - (maxZ - minZ)) * 0.5;
-
+  const w = 44;
+  const h = 30;
+  const scale = Math.min((w - 8) / Math.max(1, maxX - minX), (h - 6) / Math.max(1, maxZ - minZ));
+  const cx = (minX + maxX) * 0.5;
+  const cz = (minZ + maxZ) * 0.5;
+  if (!Number.isFinite(span)) return '';
   return (
     pts
       .map((p, i) => {
-        const sx = pad + ((p.x - minX + ox) / span) * inner;
-        const sy = pad + ((p.z - minZ + oz) / span) * inner;
-        return `${i === 0 ? 'M' : 'L'}${sx.toFixed(1)},${sy.toFixed(1)}`;
+        const sx = (w * 0.5 + (p.x - cx) * scale).toFixed(1);
+        const sy = (h * 0.5 - (p.z - cz) * scale).toFixed(1);
+        return `${i === 0 ? 'M' : 'L'}${sx},${sy}`;
       })
       .join(' ') + ' Z'
   );
 }
-
-const TIME_OPTIONS: Array<{ id: TimeOfDay; label: string }> = [
-  { id: 'golden', label: 'Golden' },
-  { id: 'noon', label: 'Noon' },
-  { id: 'twilight', label: 'Twilight' },
-];
 
 export function TitleOverlay({
   selectedCourse,
@@ -64,90 +82,109 @@ export function TitleOverlay({
   timeOfDay,
   trackLengthMeters,
   liveryConfig,
-  radioStation,
   onSelectCourse,
   onSelectMode,
   onSelectTimeOfDay,
   onStart,
   onOpenGarage,
 }: TitleOverlayProps) {
-  const coursePaths = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const c of COURSE_LIST) {
-      map[c.id] = buildMiniOutlinePath(c);
-    }
-    return map;
-  }, []);
+  const [lengthFilter, setLengthFilter] = useState<'All' | CourseLengthCategory>('All');
 
-  const currentCourse = COURSE_LIST.find((c) => c.id === selectedCourse) ?? COURSE_LIST[0];
-  const tuningLabel = TUNING_SPECS[liveryConfig.tuning].label;
-  const radioName = RADIO_STATIONS.find((s) => s.id === radioStation)?.name ?? 'Solstice FM';
-  const lengthLabel = trackLengthMeters ? `${(trackLengthMeters / 1000).toFixed(2)} km` : '2.20 km';
+  const activeCourse = COURSES[selectedCourse];
+  const tuningSpec = TUNING_SPECS[liveryConfig.tuning];
+
+  const courseMeta = useMemo(
+    () =>
+      COURSE_LIST.map((c) => ({
+        course: c,
+        path: buildMiniOutlinePath(c),
+        km: computeExactLengthKm(c),
+      })),
+    [],
+  );
+
+  const visibleCourses =
+    lengthFilter === 'All'
+      ? courseMeta
+      : courseMeta.filter((entry) => entry.course.lengthCategory === lengthFilter);
+
+  const activeKmLabel =
+    trackLengthMeters != null
+      ? `${(trackLengthMeters / 1000).toFixed(2)} km`
+      : `${computeExactLengthKm(activeCourse)} km`;
 
   return (
     <div
-      className="fixed inset-0 z-10 pointer-events-none flex flex-col justify-between p-5 sm:p-8 lg:p-10"
+      className="fixed inset-0 z-10 flex flex-col justify-between p-6 sm:p-9 lg:p-11 pointer-events-none select-none"
       style={{
         background:
-          'linear-gradient(96deg, rgba(9,12,19,0.92) 0%, rgba(9,12,19,0.72) 34%, rgba(9,12,19,0.14) 62%, rgba(9,12,19,0) 100%)',
+          'linear-gradient(96deg, rgba(8, 11, 16, 0.90) 0%, rgba(8, 11, 16, 0.70) 34%, rgba(8, 11, 16, 0.16) 60%, rgba(8, 11, 16, 0.0) 100%)',
       }}
     >
-      {/* Left-third editorial lockup & race configurator */}
-      <div className="pointer-events-auto max-w-[448px] flex flex-col gap-5 my-auto">
-        {/* Bespoke inline SVG Title Lockup */}
-        <div>
-          <svg
-            viewBox="0 0 380 86"
-            className="w-full max-w-[332px] h-auto"
-            role="img"
-            aria-label="Solstice Circuit"
-          >
-            <defs>
-              <clipPath id="sunClip">
-                <rect x="0" y="0" width="64" height="44" />
-              </clipPath>
-            </defs>
-            <g transform="translate(2, 9)">
-              <circle cx="30" cy="40" r="22" fill={currentCourse.accentHex} clipPath="url(#sunClip)" />
-              <path d="M4 44 L58 44" stroke="#f7f4ec" strokeWidth="2.4" />
-              <path d="M12 52 L50 52" stroke={currentCourse.accentHex} strokeWidth="2" opacity="0.88" />
-              <path d="M22 60 L40 60" stroke="#f7f4ec" strokeWidth="1.5" opacity="0.55" />
-            </g>
-            <text
-              x="76"
-              y="43"
-              fill="#f8f5ef"
-              fontFamily="Oxanium, sans-serif"
-              fontWeight="800"
-              fontSize="37"
-              letterSpacing="0.06em"
-            >
-              SOLSTICE
-            </text>
-            <text
-              x="78"
-              y="70"
-              fill={currentCourse.accentHex}
-              fontFamily="Oxanium, sans-serif"
-              fontWeight="600"
-              fontSize="19"
-              letterSpacing="0.3em"
-            >
-              CIRCUIT
-            </text>
-          </svg>
-        </div>
-
-        {/* 4-World Grand Circuit Selector */}
-        <div className="flex flex-col gap-2" role="radiogroup" aria-label="Select course">
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-[#d5dce8] tracking-wide">Circuit</span>
-            <span className="text-[#a4afc2] tabular-mono">
-              {currentCourse.region} · {lengthLabel}
-            </span>
+      {/* Left-aligned editorial column leaving the 12-car 3D starting grid clear on the right */}
+      <div className="w-full max-w-[440px] flex flex-col gap-5 pointer-events-auto my-auto">
+        {/* Identity Wordmark */}
+        <header className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-3">
+            <svg width="28" height="28" viewBox="0 0 36 36" aria-hidden="true" className="shrink-0">
+              <circle cx="18" cy="18" r="15" fill="none" stroke="#f59e0b" strokeWidth="2.4" />
+              <path
+                d="M9 22 C13 13, 21 12, 27 15"
+                fill="none"
+                stroke="#f5f3ee"
+                strokeWidth="2.4"
+                strokeLinecap="round"
+              />
+              <path
+                d="M11 26 C16 19, 23 18, 28 21"
+                fill="none"
+                stroke="#f59e0b"
+                strokeWidth="2.1"
+                strokeLinecap="round"
+              />
+            </svg>
+            <h1 className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight text-[#f7f4ec] leading-none">
+              SOLSTICE CIRCUIT
+            </h1>
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            {COURSE_LIST.map((course) => {
+          <p className="text-xs text-[#b8c1cf] tracking-wide">
+            {activeCourse.region} · {activeKmLabel} · {activeCourse.difficulty}
+          </p>
+        </header>
+
+        {/* Circuit Selector (clean hairline editorial list with length filter) */}
+        <section aria-label="Select circuit" className="flex flex-col gap-2">
+          <div className="flex items-center justify-between border-b border-white/12 pb-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#9ea8b8]">
+              Circuits
+            </span>
+            <div className="flex items-center gap-3">
+              {LENGTH_FILTERS.map((f) => {
+                const active = lengthFilter === f.id;
+                return (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => setLengthFilter(f.id)}
+                    className={`text-[11px] font-semibold transition-colors cursor-pointer pb-0.5 border-b ${
+                      active
+                        ? 'text-[#f7f4ec] border-[#f59e0b]'
+                        : 'text-[#8c96a8] border-transparent hover:text-[#d5dce8]'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div
+            className="max-h-[264px] overflow-y-auto studio-scroll divide-y divide-white/8 pr-1"
+            role="radiogroup"
+            aria-label="Circuit list"
+          >
+            {visibleCourses.map(({ course, path, km }) => {
               const active = course.id === selectedCourse;
               return (
                 <button
@@ -156,31 +193,36 @@ export function TitleOverlay({
                   role="radio"
                   aria-checked={active}
                   onClick={() => onSelectCourse(course.id)}
-                  className={`text-left px-3.5 py-2.5 rounded-lg border transition-colors duration-150 cursor-pointer flex items-center justify-between gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f59e0b] ${
+                  className={`w-full h-[52px] flex items-center justify-between gap-3 px-2.5 text-left transition-colors cursor-pointer border-l-2 ${
                     active
-                      ? 'bg-[#1a2232]/95 text-[#f8f6f0]'
-                      : 'bg-[#10141d]/85 border-white/12 text-[#cfd5df] hover:bg-[#19202e]/92 hover:border-white/25'
+                      ? 'bg-[#f59e0b]/12 border-[#f59e0b]'
+                      : 'bg-transparent border-transparent hover:bg-white/5'
                   }`}
-                  style={active ? { borderColor: course.accentHex } : undefined}
                 >
                   <div className="min-w-0">
-                    <div className="font-semibold text-xs sm:text-sm text-[#f8f6f0] truncate">
+                    <div
+                      className={`font-display text-sm font-bold truncate ${
+                        active ? 'text-[#f7f4ec]' : 'text-[#d3dae6]'
+                      }`}
+                    >
                       {course.name}
                     </div>
-                    <div className="text-[11px] text-[#9aa4b5] mt-0.5 tabular-mono">
-                      {course.difficulty} · {course.totalLaps} Laps
+                    <div className="text-[11px] text-[#95a0b2] mt-0.5 tabular-mono">
+                      {km} km · {course.totalLaps} laps · {course.difficulty}
                     </div>
                   </div>
                   <svg
-                    viewBox="0 0 32 32"
-                    className="w-8 h-8 shrink-0 opacity-90"
+                    width="44"
+                    height="30"
+                    viewBox="0 0 44 30"
+                    className="shrink-0"
                     aria-hidden="true"
                   >
                     <path
-                      d={coursePaths[course.id]}
+                      d={path}
                       fill="none"
-                      stroke={active ? course.accentHex : '#848fa3'}
-                      strokeWidth="2.4"
+                      stroke={active ? course.accentHex : 'rgba(220,228,240,0.34)'}
+                      strokeWidth={active ? 2.2 : 1.5}
                       strokeLinejoin="round"
                     />
                   </svg>
@@ -188,102 +230,96 @@ export function TitleOverlay({
               );
             })}
           </div>
-          <p className="text-xs text-[#bcc6d6] leading-relaxed pt-0.5">{currentCourse.tagline}</p>
-        </div>
+        </section>
 
-        {/* Mode & Live Atmosphere Controls */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="flex flex-col gap-1.5">
-            <span className="text-xs font-semibold text-[#c9d2e0]">Mode</span>
-            <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-[#0f131b]/92 border border-white/12">
-              {(
-                [
-                  { id: 'grand-prix', label: 'GP' },
-                  { id: 'time-trial', label: 'Trial' },
-                  { id: 'free-roam', label: 'Roam' },
-                ] as Array<{ id: GameMode; label: string }>
-              ).map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => onSelectMode(m.id)}
-                  aria-pressed={selectedMode === m.id}
-                  className={`py-1.5 px-2 rounded-md text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f59e0b] ${
-                    selectedMode === m.id
-                      ? 'bg-[#f6f3ec] text-[#11151d]'
-                      : 'text-[#c2c8d4] hover:text-white'
-                  }`}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <span className="text-xs font-semibold text-[#c9d2e0]">Atmosphere</span>
-            <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-[#0f131b]/92 border border-white/12">
-              {TIME_OPTIONS.map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => onSelectTimeOfDay(t.id)}
-                  aria-pressed={timeOfDay === t.id}
-                  className={`py-1.5 px-2 rounded-md text-xs font-semibold transition-colors duration-150 whitespace-nowrap cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f59e0b] ${
-                    timeOfDay === t.id
-                      ? 'bg-[#f6f3ec] text-[#11151d]'
-                      : 'text-[#c2c8d4] hover:text-white'
-                  }`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Quiet inline active car build summary (zero pill boxes) */}
-        <div className="flex items-center justify-between gap-3 pt-1 border-t border-white/10 text-xs text-[#a9b4c7]">
-          <div className="flex items-center gap-2 min-w-0 truncate">
-            <span
-              className="w-3 h-3 rounded-sm border border-white/30 shrink-0"
-              style={{ backgroundColor: liveryConfig.bodyColor }}
-              aria-hidden="true"
-            />
-            <span className="text-[#ece9e0] font-semibold tabular-mono">
-              #{liveryConfig.racingNumber}
+        {/* Clean Unboxed Session & Lighting Controls */}
+        <section className="flex flex-col gap-3 pt-1">
+          <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-2.5">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#9ea8b8]">
+              Event
             </span>
-            <span aria-hidden="true">·</span>
-            <span className="truncate">{tuningLabel}</span>
-            <span aria-hidden="true">·</span>
-            <span className="truncate">{radioName}</span>
+            <div className="flex items-center gap-4" role="radiogroup" aria-label="Race mode">
+              {MODE_OPTIONS.map((m) => {
+                const active = selectedMode === m.id;
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => onSelectMode(m.id)}
+                    className={`text-xs font-semibold pb-0.5 border-b-2 transition-colors cursor-pointer whitespace-nowrap ${
+                      active
+                        ? 'text-[#f7f4ec] border-[#f59e0b]'
+                        : 'text-[#8e98aa] border-transparent hover:text-[#d8dee9]'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
 
-        {/* Primary & Secondary Actions */}
-        <div className="flex items-center gap-3">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#9ea8b8]">
+              Time
+            </span>
+            <div className="flex items-center gap-4" role="radiogroup" aria-label="Time of day">
+              {TIME_OPTIONS.map((t) => {
+                const active = timeOfDay === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => onSelectTimeOfDay(t.id)}
+                    className={`text-xs font-semibold pb-0.5 border-b-2 transition-colors cursor-pointer ${
+                      active
+                        ? 'text-[#f7f4ec] border-[#f59e0b]'
+                        : 'text-[#8e98aa] border-transparent hover:text-[#d8dee9]'
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+
+        {/* Clear Primary Action + Quiet Secondary Garage Trigger */}
+        <div className="flex items-center gap-3 pt-1">
           <button
             type="button"
             data-start="true"
             onClick={onStart}
-            className="flex-1 py-3.5 px-6 rounded-lg bg-[#f59e0b] hover:bg-[#fbbf24] text-[#11141a] font-bold text-sm tracking-wide transition-transform duration-150 active:scale-[0.98] cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            className="flex-1 py-3.5 px-6 rounded-md bg-[#f59e0b] hover:bg-[#fbbf24] active:bg-[#d97706] text-[#11151d] font-display font-extrabold text-base tracking-wide transition-colors cursor-pointer shadow-lg shadow-black/40 whitespace-nowrap"
           >
-            {selectedMode === 'free-roam' ? 'Start Free Roam' : 'Start Race'}
+            {selectedMode === 'free-roam' ? 'Drive Circuit' : 'Start Race'}
           </button>
+
           <button
             type="button"
             onClick={onOpenGarage}
-            className="py-3.5 px-4 rounded-lg bg-[#171d29]/94 hover:bg-[#222a3a] border border-white/15 text-[#f2f0ea] font-semibold text-sm transition-colors duration-150 cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f59e0b]"
+            className="py-3.5 px-4 rounded-md bg-[#111622]/85 hover:bg-[#1a2233] border border-white/15 text-[#f2efe8] text-xs font-semibold transition-colors cursor-pointer flex items-center gap-2.5 whitespace-nowrap"
           >
-            Garage &amp; Radio
+            <span
+              className="w-2.5 h-2.5 rounded-full border border-white/30 shrink-0"
+              style={{ backgroundColor: liveryConfig.bodyColor }}
+            />
+            <span>
+              Garage · #{liveryConfig.racingNumber} {tuningSpec.label}
+            </span>
           </button>
         </div>
       </div>
 
-      {/* Single flat borderless inline control hint line in bottom safe margin */}
-      <div className="text-xs text-[#cfd5df]/85 tracking-wide">
-        WASD / Arrows Drive · Space Drift · Shift Boost · C Camera · T Reset · M Mute · Esc Pause
-      </div>
+      {/* Subtle single-line driving hint */}
+      <footer className="text-[11px] text-[#98a2b3] tracking-wide pointer-events-none">
+        WASD / Arrows Drive · Space Drift · Shift Overdrive · C Camera · T Reset · Esc Pause
+      </footer>
     </div>
   );
 }
